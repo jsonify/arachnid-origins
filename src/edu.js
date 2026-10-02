@@ -612,12 +612,14 @@
       const danger = (Game.state && Game.state.danger) || 0;
       if (p.molting || p.moltTimer > 0) return 'Freshly molted: your shell is soft. Stay hidden until it hardens.';
       if (danger > 0.55) return 'Danger close! Sprint away (Shift) or slip into cover; predators lose you when you hide.';
+      const cr = Game.creatures;
+      if (cr && cr.alarms && cr.alarms.length) return 'Your siblings spotted a predator nearby! If it is off-screen a red arrow points to it. Move away or hide.';
       if (t < 12 && !f.moved) return 'Move with W A S D or the arrow keys. Hold Z to zoom out and see the bigger picture.';
       if (p.hydration < 45 && !f.drank) return 'Thirsty? Walk up to a glistening dew drop and press E to drink.';
       if (p.hydration < 30) return 'You are very thirsty. Find dew drops and press E to drink.';
       if (p.hunger < 45 && !f.ate) return 'Hungry? Press J (or click) to bite small creatures such as springtails and mites.';
       if (p.hunger < 30) return 'You are starving. Catch small prey: bite with J or left click.';
-      if (p.energy < 28) return 'Out of energy. Press R to rest; resting hidden in a shelter recovers 3 times faster.';
+      if (p.energy < 28) return 'Out of energy. Press R to rest; resting hidden in a shelter recovers 3 times faster' + (cr && cr.count && cr.count('kin') ? ', and siblings huddle in close to help.' : '.');
       if (p.hp < p.maxHp * 0.35) return 'You are badly hurt. Hide and rest to heal while your food and water are high.';
       if (w && (w.type === 'rain' || w.type === 'drizzle') && Game.world && Game.world.exposure && Game.world.exposure(p.x, p.y) > 0.6 && st < 3) return 'Rain hurts small spiders in the open. Shelter under a leaf, in bark, or in a silk retreat.';
       if (st >= 1 && !f.spun) return 'Press Space to spin silk. Use 1-4 to choose a web type. A dragline is a quick safety line.';

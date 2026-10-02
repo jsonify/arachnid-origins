@@ -10,6 +10,7 @@
 
   // ---------------------------------------------------------------- constants
   const C = Game.C = {
+    VERSION: '1.0.0',           // shown on the title and pause screens; keep in step with package.json (tools/build.js checks)
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle

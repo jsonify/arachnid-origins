@@ -26,6 +26,7 @@
 
   // ---------------------------------------------------------------- constants
   const C = Game.C = {
+    VERSION: '1.0.0',           // shown on the title and pause screens; keep in step with package.json (tools/build.js checks)
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle
@@ -3727,6 +3728,8 @@
   const SPAWN_INVULN = 2.5, MOLT_INVULN = 2.0;
   const SPRINT_MUL = 1.7, SPRINT_DRAIN = 7.0;   // energy / s while sprinting
   const REST_REGEN = 6.0;                       // energy / s while resting (x3 sheltered)
+  // Huddling with siblings (Game.creatures.huddle, up to 3 of them close by) while resting: per sibling, recover faster and burn less food and water
+  const HUDDLE_ENERGY = 0.15, HUDDLE_HEAL = 0.2, HUDDLE_DRAIN = 0.12;
 
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
@@ -3763,7 +3766,7 @@
     hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null,
     stateLabel: 'walking', mate: { found: false, courted: false, laid: false }, mateHint: null,
     // extras (documented in the report)
-    interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1,
+    interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1, huddled: 0,
     invuln: 0, offers: [], moltPhase: 'none', soft: 0, eggSac: null, courting: false, laying: false, hatching: false,
   };
   Game.player = P;   // available immediately for modules loaded later
@@ -3830,7 +3833,7 @@
     this.hidden = false; this.resting = false; this.moltTimer = 0; this.molting = false; this.moltPhase = 'none';
     this.dead = false; this.deathCause = null; this.stateLabel = 'walking';
     this.mate = { found: false, courted: false, laid: false }; this.mateHint = null;
-    this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false;
+    this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false; this.huddled = 0;
     this.invuln = SPAWN_INVULN; this.offers = []; this.soft = 0; this.eggSac = null;
     this.courting = false; this.laying = false; this.hatching = true; this.ending = false;
     anim = 0; bitePhase = 0; biteCd = 0; flash = 0; curl = 0; shiver = 0; spinT = 0; eatT = 0; drinkT = 0; drinkAcc = 0;
@@ -4273,13 +4276,15 @@
     if (dt <= 0) return;
     const si = P.stageInfo, w = world();
     const sheltered = P.shelteredNow;
-    const k = P.drainMul * (P.resting ? 0.5 : sprinting ? 1.8 : moving ? 1.15 : 1);
+    const cr = Game.creatures, huddled = (P.resting && cr) ? num(cr.huddle, 0) : 0;
+    P.huddled = huddled;
+    const k = P.drainMul * (P.resting ? 0.5 * (1 - HUDDLE_DRAIN * huddled) : sprinting ? 1.8 : moving ? 1.15 : 1);
     P.hunger = clamp(P.hunger - si.hungerRate * k * dt, 0, 100);
     P.hydration = clamp(P.hydration - si.thirstRate * k * dt, 0, 100);
     // energy
     if (sprinting) P.energy -= SPRINT_DRAIN * dt;
     else if (P.hunger <= 0) P.energy -= si.energyRate * 2 * dt;       // starving: no recovery
-    else if (P.resting) P.energy += REST_REGEN * (sheltered ? 3 : 1) * dt;
+    else if (P.resting) P.energy += REST_REGEN * (sheltered ? 3 : 1) * (1 + HUDDLE_ENERGY * huddled) * dt;
     else P.energy += ((moving ? 1.0 : 3.0) - si.energyRate) * dt;
     P.energy = clamp(P.energy, 0, 100);
     if (P.energy <= 0) exhaustedFlag = true; else if (P.energy >= 25) exhaustedFlag = false;
@@ -4297,7 +4302,7 @@
     }
     // healing: resting while fed/watered (x3 in shelter), faint passive recovery when thriving
     if (P.hp < P.maxHp) {
-      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * dt);
+      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * (1 + HUDDLE_HEAL * huddled) * dt);
       else if (P.hunger > 60 && P.hydration > 60) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.002 * dt);
     }
     // silk
@@ -4521,6 +4526,7 @@
     flash = Math.max(0, flash - dt * 2.2); bitePhase = Math.max(0, bitePhase - dt * 4.5);
     eatT -= dt; drinkT -= dt; spinT -= dt;
     stepParticles(dt);
+    if (P.huddled > 0 && P.resting && Math.random() < dt * 1.5 * P.huddled) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 3, P.y + (Math.random() - 0.5) * P.radius * 3, 0, -5 - Math.random() * 4, 1.2, 0.5, '#ffd9a0', 0);
     if (spinT > 0 && P.stage >= 1 && Math.random() < dt * 30) { const tp = tailPos(TAIL); addParticle('spark', tp.x, tp.y, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.5, 0.45, '#ffffff', 0); }
     if (exuvia) { exuvia.t += dt; if (exuvia.t > 80) exuvia = null; }
     if (sc === 'playing') simulate(dt);
@@ -5312,8 +5318,8 @@
     activity: 'any', ext: 1.7, shadow: [1.2, 0.9], trap: null, noRespawn: true,
     diet: ['springtail', 'mite', 'midge'], habitat: ['litter'],
     value: { hunger: 0, growth: 0 }, danger: 0, color: '#c88a3a', color2: '#5a3a1a',
-    fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
-    description: 'Your brothers and sisters. They follow your dragline, share the news of prey - and flash an alarm when danger is near.',
+    fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Clustering helps tiny spiderlings hold on to moisture, and many eyes make a better lookout: when one senses danger the whole cluster reacts. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
+    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. They drift away as you grow.',
   });
   def({
     id: 'mate', name: 'Suitor', latin: 'Araneus diadematus (adult male)', role: 'spider', tier: 4, spider: true,
@@ -5996,17 +6002,64 @@
 
   // ---- spiders ---------------------------------------------------------------------------------
   const SP_HX = [0.95, 0.72, 0.5, 0.28], SP_HY = [0.3, 0.36, 0.36, 0.3];
+  // Four jointed leg pairs: each foot rests on a fixed splay angle and every knee bows outward (the more sideways of the two
+  // possible knees), so the legs fan out from the cephalothorax like the player's spider instead of hooking in toward the head.
+  // The splay is wide enough that neighbouring femurs diverge (~25 deg apart) and the two middle pairs swing a little less,
+  // so they never fold into one another mid-stride. `reach` scales the leg length (body radii); `xo[k]` nudges pair k's feet fore/aft.
+  const SPL_ANG = [20, 42, 138, 160].map(d => d * PI / 180), SPL_REACH = [2.5, 2.3, 2.3, 2.7], SPL_STRIDE = [0.85, 0.6, 0.6, 0.85];
+  const SPL_REST = 0.86, SPL_BEND = 1.02;   // resting foot distance / bone length vs. reach
+  const SPL_W = [[1.55, 1.1], [1.15, 0.8], [0.72, 0.45]];   // femur / tibia / tip stroke width (dark, light) in units of lw
+  const SLH = new Float64Array(16), SLK = new Float64Array(16), SLM = new Float64Array(16), SLF = new Float64Array(16), SLB = new Float64Array(4);   // per leg: hip, knee, mid-tibia, foot (x,y); per pair: bone length
+  function spiderLegs(ctx, reach, xo, stride, dark, light, lw) {
+    const mv = F.mv, st = F.stuck, dd = F.dead;
+    for (let k = 0; k < 4; k++) {
+      const ca = cos(SPL_ANG[k]), sa = sin(SPL_ANG[k]), len = SPL_REACH[k] * reach, bone = len * 0.5 * SPL_BEND, sw = stride * SPL_STRIDE[k];
+      SLB[k] = bone;
+      for (let s = -1; s <= 1; s += 2) {
+        const i = (k * 2 + (s > 0 ? 1 : 0)) * 2, hx = SP_HX[k], hy = SP_HY[k] * s;
+        const th = F.ph + (((k + (s > 0 ? 1 : 0)) & 1) ? PI : 0), lift = mv > 0.01 ? max(0, cos(th)) * mv : 0;
+        let fx = hx + ca * len * SPL_REST + xo[k], fy = hy + sa * len * SPL_REST * s;
+        if (st > 0.01) { const q = F.t * 24 + k * 1.9 + s * 1.3; fx += sin(q) * (sw * 0.8 + 0.25) * st; fy += cos(q * 0.9) * 0.35 * st * s; }
+        if (mv > 0.01) { fx += sin(th) * sw * mv; fy = hy + (fy - hy) * (1 - 0.1 * lift); }
+        if (dd > 0) { fy *= 1 - 0.5 * dd; fx *= 1 - 0.3 * dd; }
+        let dx = fx - hx, dy = fy - hy, d = hypot(dx, dy) || 0.001;
+        const dmax = bone * 2 * 0.985 * (1 - 0.07 * lift), dmin = len * (0.55 - 0.3 * dd);   // never over-reach, and never fold into a needle
+        if (d > dmax || d < dmin) { const q = (d > dmax ? dmax : dmin) / d; fx = hx + dx * q; fy = hy + dy * q; dx *= q; dy *= q; d *= q; }
+        const bx = hx + dx * 0.5, by = hy + dy * 0.5, h = sqrt(max(0, bone * bone - d * d * 0.25)), ux = dx / d, uy = dy / d;
+        const k1x = bx - uy * h, k1y = by + ux * h, k2x = bx + uy * h, k2y = by - ux * h;
+        // the outermost knee wins; judged by sideways reach alone (not the current foot line) so a knee never flips sides mid-stride
+        const first = k1y * s >= k2y * s;
+        let kx = first ? k1x : k2x, ky = first ? k1y : k2y;
+        if (lift > 0) { const ex = kx - bx, ey = ky - by, el = hypot(ex, ey) || 1; kx += ex / el * lift * 0.22; ky += ey / el * lift * 0.22; }
+        SLH[i] = hx; SLH[i + 1] = hy; SLK[i] = kx; SLK[i + 1] = ky; SLF[i] = fx; SLF[i + 1] = fy;
+        SLM[i] = kx + (fx - kx) * 0.68; SLM[i + 1] = ky + (fy - ky) * 0.68;
+      }
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass && !light) break;
+      ctx.strokeStyle = pass ? light : dark;
+      for (let sg = 0; sg < 3; sg++) {
+        ctx.beginPath();
+        for (let i = 0; i < 16; i += 2) {
+          if (sg === 0) { ctx.moveTo(SLH[i], SLH[i + 1]); ctx.lineTo(SLK[i], SLK[i + 1]); }
+          else if (sg === 1) { ctx.moveTo(SLK[i], SLK[i + 1]); ctx.lineTo(SLM[i], SLM[i + 1]); }
+          else { ctx.moveTo(SLM[i], SLM[i + 1]); ctx.lineTo(SLF[i], SLF[i + 1]); }
+        }
+        ctx.lineWidth = max(lw * SPL_W[sg][light ? pass : 0] * (light ? 1 : 0.8), F.px * (pass ? 0.5 : 1.1));
+        ctx.stroke();
+      }
+    }
+  }
   function spiderEyes(ctx, x0, big) {
     const e = (x, y, r) => { fe(ctx, '#07090b', x, y, r, r); ctx.globalAlpha *= 0.8; fe(ctx, '#9ab', x - r * 0.3, y - r * 0.35, r * 0.28, r * 0.28); ctx.globalAlpha /= 0.8; };
     e(x0 + 0.5, 0.09, 0.075); e(x0 + 0.5, -0.09, 0.075); e(x0 + 0.46, 0.27, 0.07); e(x0 + 0.46, -0.27, 0.07);
     e(x0 + 0.2, 0.19, big); e(x0 + 0.2, -0.19, big); e(x0 - 0.02, 0.42, 0.11); e(x0 - 0.02, -0.42, 0.11);
   }
-  const WOLF_RX = [2.1, 1.45, 0.1, -1.5], WOLF_RXD = [0, 0, 0, 0], WOLF_RY = [1.55, 2.05, 2.1, 1.85];
-  const WOLF_A = [1.0, 1.1, 1.15, 1.25], WOLF_B = [1.25, 1.35, 1.4, 1.6];
+  const WOLF_XO = [0, 0, 0, 0];
   SPR.wolf = function (ctx) {
-    const tl = F.tele;
-    for (let i = 0; i < 4; i++) WOLF_RXD[i] = WOLF_RX[i] + (i === 0 ? tl * 0.5 : 0);
-    legsN(ctx, 4, SP_HX, SP_HY, WOLF_RXD, WOLF_RY, WOLF_A, WOLF_B, 0.45, 0b0011, '#2b1f15', '#8a6a46', 0.17, true);
+    WOLF_XO[0] = F.tele * 0.5;   // front legs reach out as she winds up
+    spiderLegs(ctx, 1.05, WOLF_XO, 0.45, '#2b1f15', '#8a6a46', 0.15);
     // palps + chelicerae
     ctx.strokeStyle = '#4a3828'; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.4, 0.2); ctx.lineTo(1.95, 0.36 + sin(F.t * 6) * 0.03); ctx.moveTo(1.4, -0.2); ctx.lineTo(1.95, -0.36 - sin(F.t * 6) * 0.03); ctx.stroke();
@@ -6031,12 +6084,11 @@
   };
 
   const JUMP_PRO = symPts([1.6, 0.22, 1.55, 0.6, 1.2, 0.85, 0.55, 0.92, -0.1, 0.78, -0.35, 0.4]);
-  const JMP_RX = [1.9, 1.3, 0.3, -1.2], JMP_RXD = [0, 0, 0, 0], JMP_RY = [1.2, 1.5, 1.5, 1.35];
-  const JMP_A = [0.62, 0.68, 0.68, 0.78], JMP_B = [0.78, 0.85, 0.85, 0.95];
+  const JMP_XO = [0, 0, 0, 0];
   SPR.jumper = function (ctx) {
     const hop = clamp(F.hop, 0, 1), tl = F.tele;
-    for (let i = 0; i < 4; i++) JMP_RXD[i] = JMP_RX[i] * (1 - tl * 0.18) + (i === 0 ? hop * 0.9 : 0) + (i === 3 ? -hop * 1.0 : 0);
-    legsN(ctx, 4, SP_HX, SP_HY, JMP_RXD, JMP_RY, JMP_A, JMP_B, 0.32, 0b0011, '#14100d', '#7a6a50', 0.17, true);
+    JMP_XO[0] = hop * 0.9; JMP_XO[3] = -hop * 1.0;   // front legs throw forward, rear legs push off
+    spiderLegs(ctx, 0.72 * (1 - tl * 0.18), JMP_XO, 0.32, '#14100d', '#7a6a50', 0.15);
     ctx.strokeStyle = '#2a2018'; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.5, 0.35); ctx.lineTo(1.9, 0.5); ctx.moveTo(1.5, -0.35); ctx.lineTo(1.9, -0.5); ctx.stroke();
     fe(ctx, '#f3efe6', 1.95, 0.52, 0.1, 0.1); fe(ctx, '#f3efe6', 1.95, -0.52, 0.1, 0.1);
@@ -6055,12 +6107,9 @@
   };
 
   // orb-weaver style spider (kin spiderling / adult male)
-  const OW_RX = [2.0, 1.4, 0.0, -1.5], OW_RXD = [0, 0, 0, 0], OW_RY = [1.3, 1.8, 1.9, 1.6];
-  const OW_A = [0.95, 1.05, 1.05, 1.15], OW_B = [1.2, 1.3, 1.3, 1.45];
+  const OW_XO = [0, 0, 0, 0];
   function orbWeaver(ctx, male, cA, cB, cL, cD) {
-    const k = male ? 1 : 0.9;
-    legsN(ctx, 4, SP_HX, SP_HY, OW_RX, OW_RY, OW_A, OW_B, 0.4, 0b0011, cD, cL, male ? 0.1 : 0.12, true);
-    // banded legs: dark joint rings
+    spiderLegs(ctx, male ? 1 : 0.95, OW_XO, 0.4, cD, cL, male ? 0.11 : 0.13);
     // palps
     ctx.strokeStyle = cL; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.35, 0.2); ctx.lineTo(1.95, 0.3 + sin(F.t * 5) * 0.04); ctx.moveTo(1.35, -0.2); ctx.lineTo(1.95, -0.3 - sin(F.t * 5) * 0.04); ctx.stroke();
@@ -6082,7 +6131,7 @@
 
   // ================================================================== DRAWING
   // measured sprite extents (radial extent `ext` and x-centre `cx`, unit space) used to fit icons
-  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.1,2.83],"jumper":[0.26,2.29],"kin":[0.17,2.58],"mate":[0.17,2.57]};
+  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.55,3.04],"jumper":[0.48,2.35],"kin":[0.58,2.77],"mate":[0.62,2.87]};
   KIND_LIST.forEach(k => { const m = ICON[k.id]; k.cx = m ? m[0] : 0; k.ext = m ? m[1] : 2; if (k.bodyR == null) k.bodyR = 1.6; });
   const LIGHT_X = -0.55, LIGHT_Y = -0.83;
 
@@ -6288,6 +6337,7 @@
     phase: 'day', night: false, rain: 0, windX: 0, windY: 0, wind: 0, fog: 0, frame: 0, T: 0, w: null,
     hunterMask: null, dangerRaw: 0, sfxT: {}, birdT: 30, birdAlive: null, mateFound: false, seenT: 0, popT: 0, shareT: 0, pityT: 0, cursor: 0,
     share: [0, 0, 0], target: new Float32Array(32), count: new Int32Array(32), R: 800, rin: 300, matePending: false,
+    alarms: [], huddle: 0,   // sibling lookout warnings {id,kind,x,y,life} / siblings currently huddled with the player
   };
   // which kinds hunt each kind (for flee decisions)
   const HUNTERS = new Int32Array(32);
@@ -6954,21 +7004,57 @@
   }
 
   // ================================================================= AI: kin spiderlings
+  // Siblings earn their keep two ways:
+  //  - LOOKOUTS: a sibling that notices a hunter (within LOOKOUT_R) which would go for the player raises an alarm - a sound,
+  //    a bump in `danger` and an entry in `creatures.alarms` that the HUD turns into an arrow toward the last-seen spot.
+  //    They see further than the player's own screen, so the warning arrives before the predator does.
+  //  - HUDDLE: while the player rests the siblings tuck in close, facing outward. `creatures.huddle` counts the ones within
+  //    reach (max HUDDLE_MAX) and player.js lets each one speed recovery and slow the drain on hunger and water.
+  const LOOKOUT_R = 260, FLEE_R = 190, ALARM_LIFE = 4, ALARM_DANGER = 0.4, MAX_ALARMS = 4, HUDDLE_R = 60, HUDDLE_MAX = 3;
+  // a sibling noticed hunter h: add or refresh its alarm. A new alarm also gets a sound, a "!" over the sibling and a `kin:alarm` event.
+  function raiseAlarm(c, h) {
+    const A = S.alarms;
+    for (let i = 0; i < A.length; i++) if (A[i].id === h.id) { A[i].x = h.x; A[i].y = h.y; A[i].life = ALARM_LIFE; return; }
+    if (A.length >= MAX_ALARMS) A.shift();
+    A.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, life: ALARM_LIFE });
+    c.alertT = 1.1; c.alertCol = '#ff5a3a';
+    emitSfx('danger', c.x, c.y, 0.5, 2.5);
+    Game.emit('kin:alarm', { kind: h.kind, x: h.x, y: h.y });
+  }
+  function tickAlarms(dt) {
+    const A = S.alarms;
+    for (let i = A.length - 1; i >= 0; i--) { A[i].life -= dt; if (A[i].life <= 0) A.splice(i, 1); }
+  }
+  // how many siblings are close enough to huddle with the player (settled ones only: a fleeing sibling isn't keeping you warm)
+  function huddleTick() {
+    const P = S.P; let n = 0;
+    if (P && !P.dead && S.playing) {
+      const r = HUDDLE_R * (0.6 + P.radius / 14), r2 = r * r;
+      for (let i = 0; i < list.length && n < HUDDLE_MAX; i++) {
+        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.state === 'flee') continue;
+        const dx = c.x - P.x, dy = c.y - P.y; if (dx * dx + dy * dy < r2) n++;
+      }
+    }
+    S.huddle = n;
+  }
   function thinkKin(c, dt) {
-    const k = c.k, P = S.P;
+    const k = c.k, P = S.P, alive = !!(P && !P.dead);
     c.senseT -= dt; c.gatherT -= dt;
     const pr = P ? P.radius : 5;
     c.radius += (pr * 0.72 - c.radius) * min(1, dt * 0.4);
     if (c.senseT <= 0) {
       c.senseT = 0.2 + rnd() * 0.1;
       const hm = HUNTERS[c.ki] & NOBIRD;
-      const h = hm ? findNearest(c.x, c.y, 190, hm, c, true, false) : null;
+      const h = hm ? findNearest(c.x, c.y, LOOKOUT_R, hm, c, true, false) : null;
       if (h && h.state !== 'idle' && !(h.k.ambusher && h.state === 'ambush')) {
-        if (c.state !== 'flee') {
-          c.alertT = 1.1; c.alertCol = '#ff5a3a';
-          if (P && !P.dead && hypot(P.x - c.x, P.y - c.y) < 380) emitSfx('danger', c.x, c.y, 0.45, 2.5);
+        if (alive && hostileToPlayer(h, P)) raiseAlarm(c, h);
+        if (hypot(h.x - c.x, h.y - c.y) < FLEE_R) {   // close enough to bolt
+          if (c.state !== 'flee') {
+            c.alertT = 1.1; c.alertCol = '#ff5a3a';
+            if (alive && hypot(P.x - c.x, P.y - c.y) < 380) emitSfx('danger', c.x, c.y, 0.45, 2.5);
+          }
+          c.state = 'flee'; c.t = 1.4; c.tx = h.x; c.ty = h.y;
         }
-        c.state = 'flee'; c.t = 1.4; c.tx = h.x; c.ty = h.y;
       }
     }
     if (c.state === 'flee') {
@@ -6978,15 +7064,17 @@
       steer(c, c.wa, k.speed * 0.6, dt, 3); c.state = 'wander';
       const dx = c.x - S.cx, dy = c.y - S.cy;
       if (dx * dx + dy * dy > 520 * 520 && !Game.camera.inView(c.x, c.y, 80)) removeQuiet(c);
-    } else if (P && !P.dead) {
+    } else if (alive) {
+      const huddle = !!P.resting, ang = c.seed * TAU;
       let gx, gy, hold = 0;
-      if (c.gatherT > 0) { gx = c.gx + cos(c.ph * 0 + c.seed * TAU) * 14; gy = c.gy + sin(c.seed * TAU) * 14; hold = 6; }
-      else { const ang = c.seed * TAU + S.T * 0.15 * (c.seed > 0.5 ? 1 : -1), dist = (28 + c.seed * 70) * (0.6 + pr / 14); gx = P.x + cos(ang) * dist; gy = P.y + sin(ang) * dist; hold = 10; }
+      if (huddle) { const dist = (10 + c.seed * 16) * (0.6 + pr / 14); gx = P.x + cos(ang) * dist; gy = P.y + sin(ang) * dist; hold = 3; }
+      else if (c.gatherT > 0) { gx = c.gx + cos(c.ph * 0 + c.seed * TAU) * 14; gy = c.gy + sin(c.seed * TAU) * 14; hold = 6; }
+      else { const a2 = ang + S.T * 0.15 * (c.seed > 0.5 ? 1 : -1), dist = (28 + c.seed * 70) * (0.6 + pr / 14); gx = P.x + cos(a2) * dist; gy = P.y + sin(a2) * dist; hold = 10; }
       const dx = gx - c.x, dy = gy - c.y, d = hypot(dx, dy);
       if (d > 900) { removeQuiet(c); return; }
       if (d > hold) steer(c, atan2(dy, dx) + sin(S.T * 2 + c.seed * 9) * 0.2, k.speed * clamp(d / 70, 0.25, 1.9), dt, 6);
-      else { brake(c, dt, 6); if (P && c.gatherT <= 0 && rnd() < dt * 0.4) c.angle += (rnd() - 0.5) * 1.6; }
-      if (S.rain > 0.4 && expo(c.x, c.y) > 0.6) { /* siblings huddle near the player in rain */ }
+      else if (huddle) { brake(c, dt, 6); faceTo(c, P.x + cos(ang) * 80, P.y + sin(ang) * 80, 3, dt); }   // tucked in, facing outward on watch
+      else { brake(c, dt, 6); if (c.gatherT <= 0 && rnd() < dt * 0.4) c.angle += (rnd() - 0.5) * 1.6; }
     } else brake(c, dt, 5);
     integrate(c, dt);
   }
@@ -7468,6 +7556,7 @@
         }
         if (thr > raw) raw = thr;
       }
+      for (let i = 0; i < S.alarms.length; i++) raw = max(raw, ALARM_DANGER * clamp(S.alarms[i].life / 1.5, 0, 1));   // a sibling's warning keeps the heartbeat going a moment
     }
     const rate = raw > S.dangerRaw ? 5 : 0.9;
     S.dangerRaw += (raw - S.dangerRaw) * (1 - Math.exp(-rate * dt));
@@ -7512,6 +7601,8 @@
   const creatures = {
     priority: 40, alwaysUpdate: true,
     list, KINDS, corpses, visibleKinds, mate: null,
+    alarms: S.alarms,                       // sibling lookout warnings (HUD arrows)
+    get huddle() { return S.huddle; },      // siblings huddled with the player right now (0..HUDDLE_MAX)
     kindList() { return KIND_LIST.slice(); },
     spawn, attackAt, nearest, inRadius, spawnMate, trap,
     release(c) { if (c && !c.dead && c.state === 'stuck') { releaseWeb(c, false, false); c.state = 'flee'; c.t = 1.5; c.struggle = 0; c.tx = c.x; c.ty = c.y; c.dashT = 0; c.t2 = 0; } },
@@ -7520,6 +7611,14 @@
     drawKindIcon,
     debug() { const o = {}; for (let i = 0; i < list.length; i++) o[list[i].kind] = (o[list[i].kind] || 0) + 1; return { total: list.length, byKind: o, targets: Array.from(S.target).slice(0, KIND_LIST.length), danger: Game.state.danger, R: S.R }; },
     _S: S,
+    // test hook: draws spider kind `id` onto ctx in a pose {ph, mv, stuck, dead, tele, hop} and returns where each leg ended up: {hip, knee, foot: [[x,y] x8], bone: [4]} (unit space, leg i = pair*2 + (left ? 1 : 0))
+    _legPose(id, o, ctx) {
+      F.t = 1.2; F.ph = o.ph || 0; F.mv = o.mv || 0; F.stuck = o.stuck || 0; F.dead = o.dead || 0; F.tele = o.tele || 0; F.hop = o.hop || 0;
+      F.seed = 0.5; F.detail = false; F.sil = false; F.px = 0.05; F.open = 0; F.air = false; F.curl = 0; F.atk = 0; F.bend = 0;
+      ctx.save(); SPR[id](ctx); ctx.restore();
+      const pts = (a) => { const r = []; for (let i = 0; i < 16; i += 2) r.push([a[i], a[i + 1]]); return r; };
+      return { hip: pts(SLH), knee: pts(SLK), foot: pts(SLF), bone: Array.from(SLB) };
+    },
 
     init() {
       try { const seen = Game.store.get('seenKinds', []); if (Array.isArray(seen)) seen.forEach(s => { if (KINDS[s]) visibleKinds.add(s); }); } catch (e) { /* ignore */ }
@@ -7536,7 +7635,7 @@
       S.T = 0; S.frame = 0; S.birdT = 100; S.birdAlive = null; S.dangerRaw = 0; S.seenT = 0; S.popT = 0; S.pityT = 3; S.cursor = 0; S.kinT = 1;
       for (const k in spCache) delete spCache[k];
       for (const k in S.sfxT) delete S.sfxT[k];
-      creatures.mate = null; S.mateFound = false;
+      creatures.mate = null; S.mateFound = false; S.alarms.length = 0; S.huddle = 0;
       Game.state.danger = 0;
       S.P = Game.player || null;
       refreshEnv();
@@ -7581,8 +7680,9 @@
       if (S.playing) {
         S.pityT -= dt; if (S.pityT <= 0) { S.pityT = 3; pityTick(); }
         S.kinT -= dt; if (S.kinT <= 0) { S.kinT = 1; updateKinCount(); }
+        tickAlarms(dt); huddleTick();
         birdTick(dt);
-      }
+      } else if (S.huddle) S.huddle = 0;
       computeDanger(dt);
       S.seenT -= dt; if (S.seenT <= 0) { S.seenT = 0.3; if (S.playing) seenTick(); }
     },
@@ -8255,12 +8355,14 @@
       const danger = (Game.state && Game.state.danger) || 0;
       if (p.molting || p.moltTimer > 0) return 'Freshly molted: your shell is soft. Stay hidden until it hardens.';
       if (danger > 0.55) return 'Danger close! Sprint away (Shift) or slip into cover; predators lose you when you hide.';
+      const cr = Game.creatures;
+      if (cr && cr.alarms && cr.alarms.length) return 'Your siblings spotted a predator nearby! If it is off-screen a red arrow points to it. Move away or hide.';
       if (t < 12 && !f.moved) return 'Move with W A S D or the arrow keys. Hold Z to zoom out and see the bigger picture.';
       if (p.hydration < 45 && !f.drank) return 'Thirsty? Walk up to a glistening dew drop and press E to drink.';
       if (p.hydration < 30) return 'You are very thirsty. Find dew drops and press E to drink.';
       if (p.hunger < 45 && !f.ate) return 'Hungry? Press J (or click) to bite small creatures such as springtails and mites.';
       if (p.hunger < 30) return 'You are starving. Catch small prey: bite with J or left click.';
-      if (p.energy < 28) return 'Out of energy. Press R to rest; resting hidden in a shelter recovers 3 times faster.';
+      if (p.energy < 28) return 'Out of energy. Press R to rest; resting hidden in a shelter recovers 3 times faster' + (cr && cr.count && cr.count('kin') ? ', and siblings huddle in close to help.' : '.');
       if (p.hp < p.maxHp * 0.35) return 'You are badly hurt. Hide and rest to heal while your food and water are high.';
       if (w && (w.type === 'rain' || w.type === 'drizzle') && Game.world && Game.world.exposure && Game.world.exposure(p.x, p.y) > 0.6 && st < 3) return 'Rain hurts small spiders in the open. Shelter under a leaf, in bark, or in a silk retreat.';
       if (st >= 1 && !f.spun) return 'Press Space to spin silk. Use 1-4 to choose a web type. A dragline is a quick safety line.';
@@ -9786,7 +9888,7 @@
     hudClock(ctx);
     const cardH = hudStageCard(ctx);
     hudBanner(ctx, cardH);
-    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
+    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudAlarms(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
     hudToasts(ctx);
   }
 
@@ -10047,6 +10149,27 @@
     if (dist < 900) txt(ctx, Math.round(dist / 10) + '', ax + Math.cos(ang) * 20, ay + Math.sin(ang) * 20 + 4, { size: 11, weight: 700, color: col, align: 'center', shadow: true });
   }
 
+  // sibling lookouts: a pulsing arrow at the screen edge toward a predator they have spotted that is off-screen
+  function hudAlarms(ctx, p) {
+    const cr = Game.creatures, al = cr && cr.alarms; if (!al || !al.length || p.dead) return;
+    const cam = Game.camera, t = real(), pad = 46, K = KINDS();
+    for (let i = 0; i < al.length; i++) {
+      const a = al[i], sp = cam.worldToScreen(a.x, a.y);
+      if (sp.x > pad && sp.x < W - pad && sp.y > pad && sp.y < H - pad) continue;   // already on screen: the siblings' own "!" says enough
+      const dx = sp.x - W / 2, dy = sp.y - H / 2, ang = Math.atan2(dy, dx);
+      const sc = Math.min((W / 2 - pad) / Math.max(1e-3, Math.abs(dx)), (H / 2 - pad) / Math.max(1e-3, Math.abs(dy)));
+      const ax = W / 2 + dx * sc, ay = H / 2 + dy * sc, fade = clamp(a.life / 1.2, 0, 1), col = '#ff6a4a';
+      ctx.save(); ctx.globalAlpha = fade * (0.7 + 0.3 * Math.sin(t * 9)); ctx.translate(ax, ay);
+      ctx.fillStyle = 'rgba(20,10,5,0.55)'; ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill();
+      ctx.save(); ctx.rotate(ang); ctx.shadowColor = col; ctx.shadowBlur = 12; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(-6, -10); ctx.lineTo(-2, 0); ctx.lineTo(-6, 10); ctx.closePath(); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(25,8,4,0.85)'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke(); ctx.restore();
+      ctx.restore();
+      const kd = K && K[a.kind], lx = clamp(ax, 70, W - 70), ly = ay + (ay < H / 2 ? 32 : -26);
+      txt(ctx, kd ? kd.name : 'Predator', lx, ly, { size: 11, weight: 700, color: col, align: 'center', shadow: true, alpha: fade });
+    }
+  }
+
   function hudTip(ctx) {
     const h = ui.hint; if (!h.text || !Game.settings.hints) return;
     const age = real() - h.t0, a = smooth(clamp(age / 0.6, 0, 1));
@@ -10149,6 +10272,9 @@
     ctx.restore();
   }
 
+  // build version, small and muted (title: bottom-right corner; pause: under the Resume hint, clear of the minimap)
+  function drawVersion(ctx, x, y, align) { txt(ctx, 'v' + (C.VERSION || '?'), x, y, { size: 12, color: COL.text3, align, weight: 600 }); }
+
   function drawTitle(ctx) {
     const t = real();
     // darken the drifting world so the title reads
@@ -10190,6 +10316,7 @@
     const E = Game.edu;
     if (E && E.counts) { const c = E.counts(); txt(ctx, 'Facts discovered  ' + c.unlocked + ' / ' + c.total, W - 24, H - 24, { size: 13, color: COL.text3, align: 'right', weight: 600 }); }
     txt(ctx, 'Discoveries are kept between journeys', 24, H - 24, { size: 12, color: COL.text3, italic: true, font: SERIF });
+    drawVersion(ctx, W - 24, H - 46, 'right');
     ctx.restore();
   }
 
@@ -10294,6 +10421,7 @@
     const rects = pauseRects(), foc = ui.idx.pause || 0;
     PAUSE_ITEMS.forEach((it, i) => drawButton(ctx, rects[i], it.label, i === foc, { size: 18 }));
     let fx = W / 2 - 52; fx += keycap(ctx, 'Esc', fx, 590, { h: 22 }) + 8; txt(ctx, 'Resume', fx, 606, { size: 13, color: COL.text3 });
+    drawVersion(ctx, W / 2, 634, 'center');
     ctx.restore();
   }
 

@@ -273,8 +273,8 @@
     activity: 'any', ext: 1.7, shadow: [1.2, 0.9], trap: null, noRespawn: true,
     diet: ['springtail', 'mite', 'midge'], habitat: ['litter'],
     value: { hunger: 0, growth: 0 }, danger: 0, color: '#c88a3a', color2: '#5a3a1a',
-    fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
-    description: 'Your brothers and sisters. They follow your dragline, share the news of prey - and flash an alarm when danger is near.',
+    fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Clustering helps tiny spiderlings hold on to moisture, and many eyes make a better lookout: when one senses danger the whole cluster reacts. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
+    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. They drift away as you grow.',
   });
   def({
     id: 'mate', name: 'Suitor', latin: 'Araneus diadematus (adult male)', role: 'spider', tier: 4, spider: true,
@@ -957,17 +957,64 @@
 
   // ---- spiders ---------------------------------------------------------------------------------
   const SP_HX = [0.95, 0.72, 0.5, 0.28], SP_HY = [0.3, 0.36, 0.36, 0.3];
+  // Four jointed leg pairs: each foot rests on a fixed splay angle and every knee bows outward (the more sideways of the two
+  // possible knees), so the legs fan out from the cephalothorax like the player's spider instead of hooking in toward the head.
+  // The splay is wide enough that neighbouring femurs diverge (~25 deg apart) and the two middle pairs swing a little less,
+  // so they never fold into one another mid-stride. `reach` scales the leg length (body radii); `xo[k]` nudges pair k's feet fore/aft.
+  const SPL_ANG = [20, 42, 138, 160].map(d => d * PI / 180), SPL_REACH = [2.5, 2.3, 2.3, 2.7], SPL_STRIDE = [0.85, 0.6, 0.6, 0.85];
+  const SPL_REST = 0.86, SPL_BEND = 1.02;   // resting foot distance / bone length vs. reach
+  const SPL_W = [[1.55, 1.1], [1.15, 0.8], [0.72, 0.45]];   // femur / tibia / tip stroke width (dark, light) in units of lw
+  const SLH = new Float64Array(16), SLK = new Float64Array(16), SLM = new Float64Array(16), SLF = new Float64Array(16), SLB = new Float64Array(4);   // per leg: hip, knee, mid-tibia, foot (x,y); per pair: bone length
+  function spiderLegs(ctx, reach, xo, stride, dark, light, lw) {
+    const mv = F.mv, st = F.stuck, dd = F.dead;
+    for (let k = 0; k < 4; k++) {
+      const ca = cos(SPL_ANG[k]), sa = sin(SPL_ANG[k]), len = SPL_REACH[k] * reach, bone = len * 0.5 * SPL_BEND, sw = stride * SPL_STRIDE[k];
+      SLB[k] = bone;
+      for (let s = -1; s <= 1; s += 2) {
+        const i = (k * 2 + (s > 0 ? 1 : 0)) * 2, hx = SP_HX[k], hy = SP_HY[k] * s;
+        const th = F.ph + (((k + (s > 0 ? 1 : 0)) & 1) ? PI : 0), lift = mv > 0.01 ? max(0, cos(th)) * mv : 0;
+        let fx = hx + ca * len * SPL_REST + xo[k], fy = hy + sa * len * SPL_REST * s;
+        if (st > 0.01) { const q = F.t * 24 + k * 1.9 + s * 1.3; fx += sin(q) * (sw * 0.8 + 0.25) * st; fy += cos(q * 0.9) * 0.35 * st * s; }
+        if (mv > 0.01) { fx += sin(th) * sw * mv; fy = hy + (fy - hy) * (1 - 0.1 * lift); }
+        if (dd > 0) { fy *= 1 - 0.5 * dd; fx *= 1 - 0.3 * dd; }
+        let dx = fx - hx, dy = fy - hy, d = hypot(dx, dy) || 0.001;
+        const dmax = bone * 2 * 0.985 * (1 - 0.07 * lift), dmin = len * (0.55 - 0.3 * dd);   // never over-reach, and never fold into a needle
+        if (d > dmax || d < dmin) { const q = (d > dmax ? dmax : dmin) / d; fx = hx + dx * q; fy = hy + dy * q; dx *= q; dy *= q; d *= q; }
+        const bx = hx + dx * 0.5, by = hy + dy * 0.5, h = sqrt(max(0, bone * bone - d * d * 0.25)), ux = dx / d, uy = dy / d;
+        const k1x = bx - uy * h, k1y = by + ux * h, k2x = bx + uy * h, k2y = by - ux * h;
+        // the outermost knee wins; judged by sideways reach alone (not the current foot line) so a knee never flips sides mid-stride
+        const first = k1y * s >= k2y * s;
+        let kx = first ? k1x : k2x, ky = first ? k1y : k2y;
+        if (lift > 0) { const ex = kx - bx, ey = ky - by, el = hypot(ex, ey) || 1; kx += ex / el * lift * 0.22; ky += ey / el * lift * 0.22; }
+        SLH[i] = hx; SLH[i + 1] = hy; SLK[i] = kx; SLK[i + 1] = ky; SLF[i] = fx; SLF[i + 1] = fy;
+        SLM[i] = kx + (fx - kx) * 0.68; SLM[i + 1] = ky + (fy - ky) * 0.68;
+      }
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let pass = 0; pass < 2; pass++) {
+      if (pass && !light) break;
+      ctx.strokeStyle = pass ? light : dark;
+      for (let sg = 0; sg < 3; sg++) {
+        ctx.beginPath();
+        for (let i = 0; i < 16; i += 2) {
+          if (sg === 0) { ctx.moveTo(SLH[i], SLH[i + 1]); ctx.lineTo(SLK[i], SLK[i + 1]); }
+          else if (sg === 1) { ctx.moveTo(SLK[i], SLK[i + 1]); ctx.lineTo(SLM[i], SLM[i + 1]); }
+          else { ctx.moveTo(SLM[i], SLM[i + 1]); ctx.lineTo(SLF[i], SLF[i + 1]); }
+        }
+        ctx.lineWidth = max(lw * SPL_W[sg][light ? pass : 0] * (light ? 1 : 0.8), F.px * (pass ? 0.5 : 1.1));
+        ctx.stroke();
+      }
+    }
+  }
   function spiderEyes(ctx, x0, big) {
     const e = (x, y, r) => { fe(ctx, '#07090b', x, y, r, r); ctx.globalAlpha *= 0.8; fe(ctx, '#9ab', x - r * 0.3, y - r * 0.35, r * 0.28, r * 0.28); ctx.globalAlpha /= 0.8; };
     e(x0 + 0.5, 0.09, 0.075); e(x0 + 0.5, -0.09, 0.075); e(x0 + 0.46, 0.27, 0.07); e(x0 + 0.46, -0.27, 0.07);
     e(x0 + 0.2, 0.19, big); e(x0 + 0.2, -0.19, big); e(x0 - 0.02, 0.42, 0.11); e(x0 - 0.02, -0.42, 0.11);
   }
-  const WOLF_RX = [2.1, 1.45, 0.1, -1.5], WOLF_RXD = [0, 0, 0, 0], WOLF_RY = [1.55, 2.05, 2.1, 1.85];
-  const WOLF_A = [1.0, 1.1, 1.15, 1.25], WOLF_B = [1.25, 1.35, 1.4, 1.6];
+  const WOLF_XO = [0, 0, 0, 0];
   SPR.wolf = function (ctx) {
-    const tl = F.tele;
-    for (let i = 0; i < 4; i++) WOLF_RXD[i] = WOLF_RX[i] + (i === 0 ? tl * 0.5 : 0);
-    legsN(ctx, 4, SP_HX, SP_HY, WOLF_RXD, WOLF_RY, WOLF_A, WOLF_B, 0.45, 0b0011, '#2b1f15', '#8a6a46', 0.17, true);
+    WOLF_XO[0] = F.tele * 0.5;   // front legs reach out as she winds up
+    spiderLegs(ctx, 1.05, WOLF_XO, 0.45, '#2b1f15', '#8a6a46', 0.15);
     // palps + chelicerae
     ctx.strokeStyle = '#4a3828'; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.4, 0.2); ctx.lineTo(1.95, 0.36 + sin(F.t * 6) * 0.03); ctx.moveTo(1.4, -0.2); ctx.lineTo(1.95, -0.36 - sin(F.t * 6) * 0.03); ctx.stroke();
@@ -992,12 +1039,11 @@
   };
 
   const JUMP_PRO = symPts([1.6, 0.22, 1.55, 0.6, 1.2, 0.85, 0.55, 0.92, -0.1, 0.78, -0.35, 0.4]);
-  const JMP_RX = [1.9, 1.3, 0.3, -1.2], JMP_RXD = [0, 0, 0, 0], JMP_RY = [1.2, 1.5, 1.5, 1.35];
-  const JMP_A = [0.62, 0.68, 0.68, 0.78], JMP_B = [0.78, 0.85, 0.85, 0.95];
+  const JMP_XO = [0, 0, 0, 0];
   SPR.jumper = function (ctx) {
     const hop = clamp(F.hop, 0, 1), tl = F.tele;
-    for (let i = 0; i < 4; i++) JMP_RXD[i] = JMP_RX[i] * (1 - tl * 0.18) + (i === 0 ? hop * 0.9 : 0) + (i === 3 ? -hop * 1.0 : 0);
-    legsN(ctx, 4, SP_HX, SP_HY, JMP_RXD, JMP_RY, JMP_A, JMP_B, 0.32, 0b0011, '#14100d', '#7a6a50', 0.17, true);
+    JMP_XO[0] = hop * 0.9; JMP_XO[3] = -hop * 1.0;   // front legs throw forward, rear legs push off
+    spiderLegs(ctx, 0.72 * (1 - tl * 0.18), JMP_XO, 0.32, '#14100d', '#7a6a50', 0.15);
     ctx.strokeStyle = '#2a2018'; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.5, 0.35); ctx.lineTo(1.9, 0.5); ctx.moveTo(1.5, -0.35); ctx.lineTo(1.9, -0.5); ctx.stroke();
     fe(ctx, '#f3efe6', 1.95, 0.52, 0.1, 0.1); fe(ctx, '#f3efe6', 1.95, -0.52, 0.1, 0.1);
@@ -1016,12 +1062,9 @@
   };
 
   // orb-weaver style spider (kin spiderling / adult male)
-  const OW_RX = [2.0, 1.4, 0.0, -1.5], OW_RXD = [0, 0, 0, 0], OW_RY = [1.3, 1.8, 1.9, 1.6];
-  const OW_A = [0.95, 1.05, 1.05, 1.15], OW_B = [1.2, 1.3, 1.3, 1.45];
+  const OW_XO = [0, 0, 0, 0];
   function orbWeaver(ctx, male, cA, cB, cL, cD) {
-    const k = male ? 1 : 0.9;
-    legsN(ctx, 4, SP_HX, SP_HY, OW_RX, OW_RY, OW_A, OW_B, 0.4, 0b0011, cD, cL, male ? 0.1 : 0.12, true);
-    // banded legs: dark joint rings
+    spiderLegs(ctx, male ? 1 : 0.95, OW_XO, 0.4, cD, cL, male ? 0.11 : 0.13);
     // palps
     ctx.strokeStyle = cL; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(1.35, 0.2); ctx.lineTo(1.95, 0.3 + sin(F.t * 5) * 0.04); ctx.moveTo(1.35, -0.2); ctx.lineTo(1.95, -0.3 - sin(F.t * 5) * 0.04); ctx.stroke();
@@ -1043,7 +1086,7 @@
 
   // ================================================================== DRAWING
   // measured sprite extents (radial extent `ext` and x-centre `cx`, unit space) used to fit icons
-  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.1,2.83],"jumper":[0.26,2.29],"kin":[0.17,2.58],"mate":[0.17,2.57]};
+  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.55,3.04],"jumper":[0.48,2.35],"kin":[0.58,2.77],"mate":[0.62,2.87]};
   KIND_LIST.forEach(k => { const m = ICON[k.id]; k.cx = m ? m[0] : 0; k.ext = m ? m[1] : 2; if (k.bodyR == null) k.bodyR = 1.6; });
   const LIGHT_X = -0.55, LIGHT_Y = -0.83;
 
@@ -1249,6 +1292,7 @@
     phase: 'day', night: false, rain: 0, windX: 0, windY: 0, wind: 0, fog: 0, frame: 0, T: 0, w: null,
     hunterMask: null, dangerRaw: 0, sfxT: {}, birdT: 30, birdAlive: null, mateFound: false, seenT: 0, popT: 0, shareT: 0, pityT: 0, cursor: 0,
     share: [0, 0, 0], target: new Float32Array(32), count: new Int32Array(32), R: 800, rin: 300, matePending: false,
+    alarms: [], huddle: 0,   // sibling lookout warnings {id,kind,x,y,life} / siblings currently huddled with the player
   };
   // which kinds hunt each kind (for flee decisions)
   const HUNTERS = new Int32Array(32);
@@ -1915,21 +1959,57 @@
   }
 
   // ================================================================= AI: kin spiderlings
+  // Siblings earn their keep two ways:
+  //  - LOOKOUTS: a sibling that notices a hunter (within LOOKOUT_R) which would go for the player raises an alarm - a sound,
+  //    a bump in `danger` and an entry in `creatures.alarms` that the HUD turns into an arrow toward the last-seen spot.
+  //    They see further than the player's own screen, so the warning arrives before the predator does.
+  //  - HUDDLE: while the player rests the siblings tuck in close, facing outward. `creatures.huddle` counts the ones within
+  //    reach (max HUDDLE_MAX) and player.js lets each one speed recovery and slow the drain on hunger and water.
+  const LOOKOUT_R = 260, FLEE_R = 190, ALARM_LIFE = 4, ALARM_DANGER = 0.4, MAX_ALARMS = 4, HUDDLE_R = 60, HUDDLE_MAX = 3;
+  // a sibling noticed hunter h: add or refresh its alarm. A new alarm also gets a sound, a "!" over the sibling and a `kin:alarm` event.
+  function raiseAlarm(c, h) {
+    const A = S.alarms;
+    for (let i = 0; i < A.length; i++) if (A[i].id === h.id) { A[i].x = h.x; A[i].y = h.y; A[i].life = ALARM_LIFE; return; }
+    if (A.length >= MAX_ALARMS) A.shift();
+    A.push({ id: h.id, kind: h.kind, x: h.x, y: h.y, life: ALARM_LIFE });
+    c.alertT = 1.1; c.alertCol = '#ff5a3a';
+    emitSfx('danger', c.x, c.y, 0.5, 2.5);
+    Game.emit('kin:alarm', { kind: h.kind, x: h.x, y: h.y });
+  }
+  function tickAlarms(dt) {
+    const A = S.alarms;
+    for (let i = A.length - 1; i >= 0; i--) { A[i].life -= dt; if (A[i].life <= 0) A.splice(i, 1); }
+  }
+  // how many siblings are close enough to huddle with the player (settled ones only: a fleeing sibling isn't keeping you warm)
+  function huddleTick() {
+    const P = S.P; let n = 0;
+    if (P && !P.dead && S.playing) {
+      const r = HUDDLE_R * (0.6 + P.radius / 14), r2 = r * r;
+      for (let i = 0; i < list.length && n < HUDDLE_MAX; i++) {
+        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.state === 'flee') continue;
+        const dx = c.x - P.x, dy = c.y - P.y; if (dx * dx + dy * dy < r2) n++;
+      }
+    }
+    S.huddle = n;
+  }
   function thinkKin(c, dt) {
-    const k = c.k, P = S.P;
+    const k = c.k, P = S.P, alive = !!(P && !P.dead);
     c.senseT -= dt; c.gatherT -= dt;
     const pr = P ? P.radius : 5;
     c.radius += (pr * 0.72 - c.radius) * min(1, dt * 0.4);
     if (c.senseT <= 0) {
       c.senseT = 0.2 + rnd() * 0.1;
       const hm = HUNTERS[c.ki] & NOBIRD;
-      const h = hm ? findNearest(c.x, c.y, 190, hm, c, true, false) : null;
+      const h = hm ? findNearest(c.x, c.y, LOOKOUT_R, hm, c, true, false) : null;
       if (h && h.state !== 'idle' && !(h.k.ambusher && h.state === 'ambush')) {
-        if (c.state !== 'flee') {
-          c.alertT = 1.1; c.alertCol = '#ff5a3a';
-          if (P && !P.dead && hypot(P.x - c.x, P.y - c.y) < 380) emitSfx('danger', c.x, c.y, 0.45, 2.5);
+        if (alive && hostileToPlayer(h, P)) raiseAlarm(c, h);
+        if (hypot(h.x - c.x, h.y - c.y) < FLEE_R) {   // close enough to bolt
+          if (c.state !== 'flee') {
+            c.alertT = 1.1; c.alertCol = '#ff5a3a';
+            if (alive && hypot(P.x - c.x, P.y - c.y) < 380) emitSfx('danger', c.x, c.y, 0.45, 2.5);
+          }
+          c.state = 'flee'; c.t = 1.4; c.tx = h.x; c.ty = h.y;
         }
-        c.state = 'flee'; c.t = 1.4; c.tx = h.x; c.ty = h.y;
       }
     }
     if (c.state === 'flee') {
@@ -1939,15 +2019,17 @@
       steer(c, c.wa, k.speed * 0.6, dt, 3); c.state = 'wander';
       const dx = c.x - S.cx, dy = c.y - S.cy;
       if (dx * dx + dy * dy > 520 * 520 && !Game.camera.inView(c.x, c.y, 80)) removeQuiet(c);
-    } else if (P && !P.dead) {
+    } else if (alive) {
+      const huddle = !!P.resting, ang = c.seed * TAU;
       let gx, gy, hold = 0;
-      if (c.gatherT > 0) { gx = c.gx + cos(c.ph * 0 + c.seed * TAU) * 14; gy = c.gy + sin(c.seed * TAU) * 14; hold = 6; }
-      else { const ang = c.seed * TAU + S.T * 0.15 * (c.seed > 0.5 ? 1 : -1), dist = (28 + c.seed * 70) * (0.6 + pr / 14); gx = P.x + cos(ang) * dist; gy = P.y + sin(ang) * dist; hold = 10; }
+      if (huddle) { const dist = (10 + c.seed * 16) * (0.6 + pr / 14); gx = P.x + cos(ang) * dist; gy = P.y + sin(ang) * dist; hold = 3; }
+      else if (c.gatherT > 0) { gx = c.gx + cos(c.ph * 0 + c.seed * TAU) * 14; gy = c.gy + sin(c.seed * TAU) * 14; hold = 6; }
+      else { const a2 = ang + S.T * 0.15 * (c.seed > 0.5 ? 1 : -1), dist = (28 + c.seed * 70) * (0.6 + pr / 14); gx = P.x + cos(a2) * dist; gy = P.y + sin(a2) * dist; hold = 10; }
       const dx = gx - c.x, dy = gy - c.y, d = hypot(dx, dy);
       if (d > 900) { removeQuiet(c); return; }
       if (d > hold) steer(c, atan2(dy, dx) + sin(S.T * 2 + c.seed * 9) * 0.2, k.speed * clamp(d / 70, 0.25, 1.9), dt, 6);
-      else { brake(c, dt, 6); if (P && c.gatherT <= 0 && rnd() < dt * 0.4) c.angle += (rnd() - 0.5) * 1.6; }
-      if (S.rain > 0.4 && expo(c.x, c.y) > 0.6) { /* siblings huddle near the player in rain */ }
+      else if (huddle) { brake(c, dt, 6); faceTo(c, P.x + cos(ang) * 80, P.y + sin(ang) * 80, 3, dt); }   // tucked in, facing outward on watch
+      else { brake(c, dt, 6); if (c.gatherT <= 0 && rnd() < dt * 0.4) c.angle += (rnd() - 0.5) * 1.6; }
     } else brake(c, dt, 5);
     integrate(c, dt);
   }
@@ -2429,6 +2511,7 @@
         }
         if (thr > raw) raw = thr;
       }
+      for (let i = 0; i < S.alarms.length; i++) raw = max(raw, ALARM_DANGER * clamp(S.alarms[i].life / 1.5, 0, 1));   // a sibling's warning keeps the heartbeat going a moment
     }
     const rate = raw > S.dangerRaw ? 5 : 0.9;
     S.dangerRaw += (raw - S.dangerRaw) * (1 - Math.exp(-rate * dt));
@@ -2473,6 +2556,8 @@
   const creatures = {
     priority: 40, alwaysUpdate: true,
     list, KINDS, corpses, visibleKinds, mate: null,
+    alarms: S.alarms,                       // sibling lookout warnings (HUD arrows)
+    get huddle() { return S.huddle; },      // siblings huddled with the player right now (0..HUDDLE_MAX)
     kindList() { return KIND_LIST.slice(); },
     spawn, attackAt, nearest, inRadius, spawnMate, trap,
     release(c) { if (c && !c.dead && c.state === 'stuck') { releaseWeb(c, false, false); c.state = 'flee'; c.t = 1.5; c.struggle = 0; c.tx = c.x; c.ty = c.y; c.dashT = 0; c.t2 = 0; } },
@@ -2481,6 +2566,14 @@
     drawKindIcon,
     debug() { const o = {}; for (let i = 0; i < list.length; i++) o[list[i].kind] = (o[list[i].kind] || 0) + 1; return { total: list.length, byKind: o, targets: Array.from(S.target).slice(0, KIND_LIST.length), danger: Game.state.danger, R: S.R }; },
     _S: S,
+    // test hook: draws spider kind `id` onto ctx in a pose {ph, mv, stuck, dead, tele, hop} and returns where each leg ended up: {hip, knee, foot: [[x,y] x8], bone: [4]} (unit space, leg i = pair*2 + (left ? 1 : 0))
+    _legPose(id, o, ctx) {
+      F.t = 1.2; F.ph = o.ph || 0; F.mv = o.mv || 0; F.stuck = o.stuck || 0; F.dead = o.dead || 0; F.tele = o.tele || 0; F.hop = o.hop || 0;
+      F.seed = 0.5; F.detail = false; F.sil = false; F.px = 0.05; F.open = 0; F.air = false; F.curl = 0; F.atk = 0; F.bend = 0;
+      ctx.save(); SPR[id](ctx); ctx.restore();
+      const pts = (a) => { const r = []; for (let i = 0; i < 16; i += 2) r.push([a[i], a[i + 1]]); return r; };
+      return { hip: pts(SLH), knee: pts(SLK), foot: pts(SLF), bone: Array.from(SLB) };
+    },
 
     init() {
       try { const seen = Game.store.get('seenKinds', []); if (Array.isArray(seen)) seen.forEach(s => { if (KINDS[s]) visibleKinds.add(s); }); } catch (e) { /* ignore */ }
@@ -2497,7 +2590,7 @@
       S.T = 0; S.frame = 0; S.birdT = 100; S.birdAlive = null; S.dangerRaw = 0; S.seenT = 0; S.popT = 0; S.pityT = 3; S.cursor = 0; S.kinT = 1;
       for (const k in spCache) delete spCache[k];
       for (const k in S.sfxT) delete S.sfxT[k];
-      creatures.mate = null; S.mateFound = false;
+      creatures.mate = null; S.mateFound = false; S.alarms.length = 0; S.huddle = 0;
       Game.state.danger = 0;
       S.P = Game.player || null;
       refreshEnv();
@@ -2542,8 +2635,9 @@
       if (S.playing) {
         S.pityT -= dt; if (S.pityT <= 0) { S.pityT = 3; pityTick(); }
         S.kinT -= dt; if (S.kinT <= 0) { S.kinT = 1; updateKinCount(); }
+        tickAlarms(dt); huddleTick();
         birdTick(dt);
-      }
+      } else if (S.huddle) S.huddle = 0;
       computeDanger(dt);
       S.seenT -= dt; if (S.seenT <= 0) { S.seenT = 0.3; if (S.playing) seenTick(); }
     },
