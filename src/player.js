@@ -22,6 +22,8 @@
   const SPAWN_INVULN = 2.5, MOLT_INVULN = 2.0;
   const SPRINT_MUL = 1.7, SPRINT_DRAIN = 7.0;   // energy / s while sprinting
   const REST_REGEN = 6.0;                       // energy / s while resting (x3 sheltered)
+  // Huddling with siblings (Game.creatures.huddle, up to 3 of them close by) while resting: per sibling, recover faster and burn less food and water
+  const HUDDLE_ENERGY = 0.15, HUDDLE_HEAL = 0.2, HUDDLE_DRAIN = 0.12;
 
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
@@ -58,7 +60,7 @@
     hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null,
     stateLabel: 'walking', mate: { found: false, courted: false, laid: false }, mateHint: null,
     // extras (documented in the report)
-    interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1,
+    interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1, huddled: 0,
     invuln: 0, offers: [], moltPhase: 'none', soft: 0, eggSac: null, courting: false, laying: false, hatching: false,
   };
   Game.player = P;   // available immediately for modules loaded later
@@ -125,7 +127,7 @@
     this.hidden = false; this.resting = false; this.moltTimer = 0; this.molting = false; this.moltPhase = 'none';
     this.dead = false; this.deathCause = null; this.stateLabel = 'walking';
     this.mate = { found: false, courted: false, laid: false }; this.mateHint = null;
-    this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false;
+    this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false; this.huddled = 0;
     this.invuln = SPAWN_INVULN; this.offers = []; this.soft = 0; this.eggSac = null;
     this.courting = false; this.laying = false; this.hatching = true; this.ending = false;
     anim = 0; bitePhase = 0; biteCd = 0; flash = 0; curl = 0; shiver = 0; spinT = 0; eatT = 0; drinkT = 0; drinkAcc = 0;
@@ -568,13 +570,15 @@
     if (dt <= 0) return;
     const si = P.stageInfo, w = world();
     const sheltered = P.shelteredNow;
-    const k = P.drainMul * (P.resting ? 0.5 : sprinting ? 1.8 : moving ? 1.15 : 1);
+    const cr = Game.creatures, huddled = (P.resting && cr) ? num(cr.huddle, 0) : 0;
+    P.huddled = huddled;
+    const k = P.drainMul * (P.resting ? 0.5 * (1 - HUDDLE_DRAIN * huddled) : sprinting ? 1.8 : moving ? 1.15 : 1);
     P.hunger = clamp(P.hunger - si.hungerRate * k * dt, 0, 100);
     P.hydration = clamp(P.hydration - si.thirstRate * k * dt, 0, 100);
     // energy
     if (sprinting) P.energy -= SPRINT_DRAIN * dt;
     else if (P.hunger <= 0) P.energy -= si.energyRate * 2 * dt;       // starving: no recovery
-    else if (P.resting) P.energy += REST_REGEN * (sheltered ? 3 : 1) * dt;
+    else if (P.resting) P.energy += REST_REGEN * (sheltered ? 3 : 1) * (1 + HUDDLE_ENERGY * huddled) * dt;
     else P.energy += ((moving ? 1.0 : 3.0) - si.energyRate) * dt;
     P.energy = clamp(P.energy, 0, 100);
     if (P.energy <= 0) exhaustedFlag = true; else if (P.energy >= 25) exhaustedFlag = false;
@@ -592,7 +596,7 @@
     }
     // healing: resting while fed/watered (x3 in shelter), faint passive recovery when thriving
     if (P.hp < P.maxHp) {
-      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * dt);
+      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * (1 + HUDDLE_HEAL * huddled) * dt);
       else if (P.hunger > 60 && P.hydration > 60) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.002 * dt);
     }
     // silk
@@ -816,6 +820,7 @@
     flash = Math.max(0, flash - dt * 2.2); bitePhase = Math.max(0, bitePhase - dt * 4.5);
     eatT -= dt; drinkT -= dt; spinT -= dt;
     stepParticles(dt);
+    if (P.huddled > 0 && P.resting && Math.random() < dt * 1.5 * P.huddled) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 3, P.y + (Math.random() - 0.5) * P.radius * 3, 0, -5 - Math.random() * 4, 1.2, 0.5, '#ffd9a0', 0);
     if (spinT > 0 && P.stage >= 1 && Math.random() < dt * 30) { const tp = tailPos(TAIL); addParticle('spark', tp.x, tp.y, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.5, 0.45, '#ffffff', 0); }
     if (exuvia) { exuvia.t += dt; if (exuvia.t > 80) exuvia = null; }
     if (sc === 'playing') simulate(dt);

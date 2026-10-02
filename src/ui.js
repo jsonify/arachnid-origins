@@ -985,7 +985,7 @@
     hudClock(ctx);
     const cardH = hudStageCard(ctx);
     hudBanner(ctx, cardH);
-    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
+    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudAlarms(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
     hudToasts(ctx);
   }
 
@@ -1244,6 +1244,27 @@
     ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(-7, -9); ctx.lineTo(-3, 0); ctx.lineTo(-7, 9); ctx.closePath(); ctx.fill();
     ctx.restore();
     if (dist < 900) txt(ctx, Math.round(dist / 10) + '', ax + Math.cos(ang) * 20, ay + Math.sin(ang) * 20 + 4, { size: 11, weight: 700, color: col, align: 'center', shadow: true });
+  }
+
+  // sibling lookouts: a pulsing arrow at the screen edge toward a predator they have spotted that is off-screen
+  function hudAlarms(ctx, p) {
+    const cr = Game.creatures, al = cr && cr.alarms; if (!al || !al.length || p.dead) return;
+    const cam = Game.camera, t = real(), pad = 46, K = KINDS();
+    for (let i = 0; i < al.length; i++) {
+      const a = al[i], sp = cam.worldToScreen(a.x, a.y);
+      if (sp.x > pad && sp.x < W - pad && sp.y > pad && sp.y < H - pad) continue;   // already on screen: the siblings' own "!" says enough
+      const dx = sp.x - W / 2, dy = sp.y - H / 2, ang = Math.atan2(dy, dx);
+      const sc = Math.min((W / 2 - pad) / Math.max(1e-3, Math.abs(dx)), (H / 2 - pad) / Math.max(1e-3, Math.abs(dy)));
+      const ax = W / 2 + dx * sc, ay = H / 2 + dy * sc, fade = clamp(a.life / 1.2, 0, 1), col = '#ff6a4a';
+      ctx.save(); ctx.globalAlpha = fade * (0.7 + 0.3 * Math.sin(t * 9)); ctx.translate(ax, ay);
+      ctx.fillStyle = 'rgba(20,10,5,0.55)'; ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill();
+      ctx.save(); ctx.rotate(ang); ctx.shadowColor = col; ctx.shadowBlur = 12; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(-6, -10); ctx.lineTo(-2, 0); ctx.lineTo(-6, 10); ctx.closePath(); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(25,8,4,0.85)'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke(); ctx.restore();
+      ctx.restore();
+      const kd = K && K[a.kind], lx = clamp(ax, 70, W - 70), ly = ay + (ay < H / 2 ? 32 : -26);
+      txt(ctx, kd ? kd.name : 'Predator', lx, ly, { size: 11, weight: 700, color: col, align: 'center', shadow: true, alpha: fade });
+    }
   }
 
   function hudTip(ctx) {
