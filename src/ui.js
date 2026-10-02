@@ -473,6 +473,8 @@
     { key: 'sfx', label: 'Sound effects', type: 'slider' },
     { key: 'muted', label: 'Mute all audio', type: 'toggle' },
     { key: 'screenShake', label: 'Screen shake', type: 'toggle' },
+    { key: 'mouseAim', label: 'Mouse aim (FPS controls)', type: 'toggle', desc: 'Face the cursor; WASD strafes' },
+    { key: 'keyGuide', label: 'Key guide panel', type: 'toggle', desc: 'H in game' },
     { key: 'science', label: 'Science Mode', type: 'toggle', desc: 'F in game' },
     { key: 'hints', label: 'Gameplay hints', type: 'toggle' },
   ];
@@ -683,6 +685,7 @@
     if (nav.pause) { sfx('ui_click'); Game.pause(); return; }
     if (nav.codex) { sfx('ui_click'); Game.setScene('codex'); return; }
     if (I.pressed('map')) { ui.mapBig = !ui.mapBig; sfx('ui_click'); }
+    if (I.pressed('guide')) { setSetting('keyGuide', !Game.settings.keyGuide); sfx('ui_click'); }
     if (I.pressed('science')) { setSetting('science', !Game.settings.science); sfx('ui_click'); }
     if (real() - fog.t > 0.4) refreshFog();
     ui._promptT -= dt; if (ui._promptT <= 0) { ui._promptT = 0.1; ui.prompt = computePrompt(); }
@@ -976,7 +979,7 @@
     if (sc !== 'playing' && sc !== 'paused') return;
     const p = P();
     hudVignettes(ctx, p);
-    if (p) { hudStats(ctx, p); hudHotbar(ctx, p); }
+    if (p) { hudStats(ctx, p); hudHotbar(ctx, p); if (Game.settings.keyGuide) hudKeyGuide(ctx); }
     hudObjectives(ctx);
     hudMinimap(ctx, p);
     hudClock(ctx);
@@ -997,6 +1000,26 @@
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.38, W / 2, H / 2, H * 0.95);
     g.addColorStop(0, 'rgba(' + rgb + ',0)'); g.addColorStop(1, 'rgba(' + rgb + ',' + clamp(a, 0, 0.7).toFixed(3) + ')');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  function hudKeyGuide(ctx) {
+    const aim = !!Game.settings.mouseAim;
+    const rows = [
+      [['Mouse'], aim ? 'Aim / face direction' : null],
+      [['W', 'S'], aim ? 'To / from cursor' : 'Move up / down'],
+      [['A', 'D'], aim ? 'Strafe left / right' : 'Move left / right'],
+      [['Shift'], 'Sprint'], [['Click'], 'Bite (or J)'], [['Space'], 'Spin web'],
+      [['1', '2', '3', '4'], 'Select web'], [['E'], 'Interact'], [['R'], 'Rest'],
+      [['B', 'M', 'F'], 'Codex / Map / Science'], [['H', 'Z', 'Esc'], 'Guide / Zoom / Pause'],
+    ].filter(r => r[1]);
+    const x = 16, y = 226, w = 272, rh = 21, h = 32 + rows.length * rh;
+    panel(ctx, x, y, w, h, { fill: COL.panelSoft });
+    spaced(ctx, 'KEY GUIDE', x + 16, y + 21, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+    rows.forEach((r, i) => {
+      const ry = y + 30 + i * rh; let kx = x + 16;
+      r[0].forEach(k => { kx += keycap(ctx, k, kx, ry, { h: 18, size: 10 }) + 3; });
+      txt(ctx, r[1], x + 108, ry + 9, { size: 13, color: COL.text, base: 'middle' });
+    });
   }
 
   function hudStats(ctx, p) {
@@ -1417,7 +1440,7 @@
   }
 
   const CONTROLS = [
-    [['W', 'A', 'S', 'D'], 'Move (or arrow keys)'], [['Shift'], 'Sprint (uses energy)'], [['J'], 'Bite (or left click)'],
+    [['Mouse'], 'Aim: spider faces the cursor'], [['W', 'A', 'S', 'D'], 'Move / strafe (arrows too)'], [['Shift'], 'Sprint (uses energy)'], [['J'], 'Bite (or left click)'],
     [['E'], 'Drink, hide, court, lay eggs'], [['R'], 'Rest and recover'], [['Space'], 'Spin the selected web'],
     [['1', '2', '3', '4'], 'Choose web type'], [['Z'], 'Hold to zoom out'], [['M'], 'Enlarge the minimap'],
     [['B'], 'Codex: creatures and facts'], [['F'], 'Science Mode on / off'], [['Esc'], 'Pause (P works too)'],

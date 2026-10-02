@@ -434,7 +434,7 @@
     }
   }
 
-  function steer(dt, ax, ay, sprint) {
+  function steer(dt, ax, ay, sprint, aim) {
     const si = P.stageInfo, w = Game.webs;
     let spd = si.speed * P.speedMul, mod = 1;
     if (P.molting || P.moltTimer > 0) mod *= 0.5;
@@ -448,6 +448,12 @@
     const dvx = tx - P.vx, dvy = ty - P.vy, d = Math.hypot(dvx, dvy), step = acc * dt;
     if (d <= step) { P.vx = tx; P.vy = ty; } else { P.vx += dvx / d * step; P.vy += dvy / d * step; }
     const sp = Math.hypot(P.vx, P.vy);
+    if (aim != null) {
+      // mouse-aim: always face the cursor, regardless of travel direction
+      P.angle = U.turnToward(P.angle, aim, (16 - P.stage * 1.2) * dt);
+      moveBy(P.vx * dt, P.vy * dt);
+      return sp;
+    }
     let ta = P.angle;
     if (sp > 14) ta = Math.atan2(P.vy, P.vx); else if (hasIn) ta = Math.atan2(ay, ax); else ta = P.angle;
     if (sp > 14 || hasIn) P.angle = U.turnToward(P.angle, ta, (12 - P.stage * 1.1) * dt);
@@ -639,7 +645,16 @@
       layUpdate(dt); P.vx = P.vy = 0; P.stateLabel = 'courting';
     } else {
       // ---- normal control
-      const a = I.axis(); let ax = a.x, ay = a.y;
+      const a = I.axis(); let ax = a.x, ay = a.y, aim = null;
+      if (Game.settings.mouseAim && I.mouse) {
+        // FPS-style: W/S move toward/away from the cursor, A/D strafe
+        const m = I.mouse, dx = m.wx - P.x, dy = m.wy - P.y;
+        if (dx * dx + dy * dy > P.radius * P.radius * 0.36) aim = Math.atan2(dy, dx);
+        const fa = aim != null ? aim : P.angle, fx = Math.cos(fa), fy = Math.sin(fa);
+        const fwd = -ay, side = ax;
+        ax = fx * fwd - fy * side; ay = fy * fwd + fx * side;
+        if (aim == null) aim = P.angle;
+      }
       moving = ax !== 0 || ay !== 0;
       if (I.pressed('rest') && restToggleCd <= 0) { if (P.resting) setResting(false); else if (Math.hypot(P.vx, P.vy) < 70) setResting(true); }
       if (P.resting && moving) setResting(false);
@@ -655,7 +670,7 @@
       if (P.resting) { ax = ay = 0; moving = false; }
       sprint = moving && I.down('sprint') && P.energy > 0 && !exhaustedFlag && P.hunger > 0;
       P.sprinting = sprint;
-      sp = steer(dt, ax, ay, sprint);
+      sp = steer(dt, ax, ay, sprint, aim);
       if (I.down('bite')) P.bite();
       interact(dt);
       P.stateLabel = spinT > 0 ? 'spinning' : P.resting ? 'resting' : sprint ? 'sprinting' : 'walking';
