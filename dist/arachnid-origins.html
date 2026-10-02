@@ -68,7 +68,7 @@
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
       web1: ['Digit1'], web2: ['Digit2'], web3: ['Digit3'], web4: ['Digit4'],
-      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'],
+      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'], guide: ['KeyH'],
       pause: ['Escape', 'KeyP'], confirm: ['Enter', 'Space'], back: ['Escape', 'Backspace'],
       menuUp: ['ArrowUp', 'KeyW'], menuDown: ['ArrowDown', 'KeyS'], menuLeft: ['ArrowLeft', 'KeyA'], menuRight: ['ArrowRight', 'KeyD'],
       tabNext: ['Tab', 'KeyE'], tabPrev: ['KeyQ'],
@@ -142,7 +142,7 @@
     get(k, d) { try { const v = root.localStorage && root.localStorage.getItem('ao_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return k in memStore ? memStore[k] : d; } },
     set(k, v) { try { root.localStorage.setItem('ao_' + k, JSON.stringify(v)); } catch (e) { memStore[k] = v; } },
   };
-  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true }, Game.store.get('settings', {}));
+  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true }, Game.store.get('settings', {}));
   Game.saveSettings = () => Game.store.set('settings', Game.settings);
 
   // --------------------------------------------------------------- shared state
@@ -4139,7 +4139,7 @@
     }
   }
 
-  function steer(dt, ax, ay, sprint) {
+  function steer(dt, ax, ay, sprint, aim) {
     const si = P.stageInfo, w = Game.webs;
     let spd = si.speed * P.speedMul, mod = 1;
     if (P.molting || P.moltTimer > 0) mod *= 0.5;
@@ -4153,6 +4153,12 @@
     const dvx = tx - P.vx, dvy = ty - P.vy, d = Math.hypot(dvx, dvy), step = acc * dt;
     if (d <= step) { P.vx = tx; P.vy = ty; } else { P.vx += dvx / d * step; P.vy += dvy / d * step; }
     const sp = Math.hypot(P.vx, P.vy);
+    if (aim != null) {
+      // mouse-aim: always face the cursor, regardless of travel direction
+      P.angle = U.turnToward(P.angle, aim, (16 - P.stage * 1.2) * dt);
+      moveBy(P.vx * dt, P.vy * dt);
+      return sp;
+    }
     let ta = P.angle;
     if (sp > 14) ta = Math.atan2(P.vy, P.vx); else if (hasIn) ta = Math.atan2(ay, ax); else ta = P.angle;
     if (sp > 14 || hasIn) P.angle = U.turnToward(P.angle, ta, (12 - P.stage * 1.1) * dt);
@@ -4344,7 +4350,16 @@
       layUpdate(dt); P.vx = P.vy = 0; P.stateLabel = 'courting';
     } else {
       // ---- normal control
-      const a = I.axis(); let ax = a.x, ay = a.y;
+      const a = I.axis(); let ax = a.x, ay = a.y, aim = null;
+      if (Game.settings.mouseAim && I.mouse) {
+        // FPS-style: W/S move toward/away from the cursor, A/D strafe
+        const m = I.mouse, dx = m.wx - P.x, dy = m.wy - P.y;
+        if (dx * dx + dy * dy > P.radius * P.radius * 0.36) aim = Math.atan2(dy, dx);
+        const fa = aim != null ? aim : P.angle, fx = Math.cos(fa), fy = Math.sin(fa);
+        const fwd = -ay, side = ax;
+        ax = fx * fwd - fy * side; ay = fy * fwd + fx * side;
+        if (aim == null) aim = P.angle;
+      }
       moving = ax !== 0 || ay !== 0;
       if (I.pressed('rest') && restToggleCd <= 0) { if (P.resting) setResting(false); else if (Math.hypot(P.vx, P.vy) < 70) setResting(true); }
       if (P.resting && moving) setResting(false);
@@ -4360,7 +4375,7 @@
       if (P.resting) { ax = ay = 0; moving = false; }
       sprint = moving && I.down('sprint') && P.energy > 0 && !exhaustedFlag && P.hunger > 0;
       P.sprinting = sprint;
-      sp = steer(dt, ax, ay, sprint);
+      sp = steer(dt, ax, ay, sprint, aim);
       if (I.down('bite')) P.bite();
       interact(dt);
       P.stateLabel = spinT > 0 ? 'spinning' : P.resting ? 'resting' : sprint ? 'sprinting' : 'walking';
@@ -9259,6 +9274,8 @@
     { key: 'sfx', label: 'Sound effects', type: 'slider' },
     { key: 'muted', label: 'Mute all audio', type: 'toggle' },
     { key: 'screenShake', label: 'Screen shake', type: 'toggle' },
+    { key: 'mouseAim', label: 'Mouse aim (FPS controls)', type: 'toggle', desc: 'Face the cursor; WASD strafes' },
+    { key: 'keyGuide', label: 'Key guide panel', type: 'toggle', desc: 'H in game' },
     { key: 'science', label: 'Science Mode', type: 'toggle', desc: 'F in game' },
     { key: 'hints', label: 'Gameplay hints', type: 'toggle' },
   ];
@@ -9469,6 +9486,7 @@
     if (nav.pause) { sfx('ui_click'); Game.pause(); return; }
     if (nav.codex) { sfx('ui_click'); Game.setScene('codex'); return; }
     if (I.pressed('map')) { ui.mapBig = !ui.mapBig; sfx('ui_click'); }
+    if (I.pressed('guide')) { setSetting('keyGuide', !Game.settings.keyGuide); sfx('ui_click'); }
     if (I.pressed('science')) { setSetting('science', !Game.settings.science); sfx('ui_click'); }
     if (real() - fog.t > 0.4) refreshFog();
     ui._promptT -= dt; if (ui._promptT <= 0) { ui._promptT = 0.1; ui.prompt = computePrompt(); }
@@ -9762,7 +9780,7 @@
     if (sc !== 'playing' && sc !== 'paused') return;
     const p = P();
     hudVignettes(ctx, p);
-    if (p) { hudStats(ctx, p); hudHotbar(ctx, p); }
+    if (p) { hudStats(ctx, p); hudHotbar(ctx, p); if (Game.settings.keyGuide) hudKeyGuide(ctx); }
     hudObjectives(ctx);
     hudMinimap(ctx, p);
     hudClock(ctx);
@@ -9783,6 +9801,26 @@
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.38, W / 2, H / 2, H * 0.95);
     g.addColorStop(0, 'rgba(' + rgb + ',0)'); g.addColorStop(1, 'rgba(' + rgb + ',' + clamp(a, 0, 0.7).toFixed(3) + ')');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  function hudKeyGuide(ctx) {
+    const aim = !!Game.settings.mouseAim;
+    const rows = [
+      [['Mouse'], aim ? 'Aim / face direction' : null],
+      [['W', 'S'], aim ? 'To / from cursor' : 'Move up / down'],
+      [['A', 'D'], aim ? 'Strafe left / right' : 'Move left / right'],
+      [['Shift'], 'Sprint'], [['Click'], 'Bite (or J)'], [['Space'], 'Spin web'],
+      [['1', '2', '3', '4'], 'Select web'], [['E'], 'Interact'], [['R'], 'Rest'],
+      [['B', 'M', 'F'], 'Codex / Map / Science'], [['H', 'Z', 'Esc'], 'Guide / Zoom / Pause'],
+    ].filter(r => r[1]);
+    const x = 16, y = 226, w = 272, rh = 21, h = 32 + rows.length * rh;
+    panel(ctx, x, y, w, h, { fill: COL.panelSoft });
+    spaced(ctx, 'KEY GUIDE', x + 16, y + 21, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+    rows.forEach((r, i) => {
+      const ry = y + 30 + i * rh; let kx = x + 16;
+      r[0].forEach(k => { kx += keycap(ctx, k, kx, ry, { h: 18, size: 10 }) + 3; });
+      txt(ctx, r[1], x + 108, ry + 9, { size: 13, color: COL.text, base: 'middle' });
+    });
   }
 
   function hudStats(ctx, p) {
@@ -10203,7 +10241,7 @@
   }
 
   const CONTROLS = [
-    [['W', 'A', 'S', 'D'], 'Move (or arrow keys)'], [['Shift'], 'Sprint (uses energy)'], [['J'], 'Bite (or left click)'],
+    [['Mouse'], 'Aim: spider faces the cursor'], [['W', 'A', 'S', 'D'], 'Move / strafe (arrows too)'], [['Shift'], 'Sprint (uses energy)'], [['J'], 'Bite (or left click)'],
     [['E'], 'Drink, hide, court, lay eggs'], [['R'], 'Rest and recover'], [['Space'], 'Spin the selected web'],
     [['1', '2', '3', '4'], 'Choose web type'], [['Z'], 'Hold to zoom out'], [['M'], 'Enlarge the minimap'],
     [['B'], 'Codex: creatures and facts'], [['F'], 'Science Mode on / off'], [['Esc'], 'Pause (P works too)'],

@@ -52,7 +52,7 @@
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
       web1: ['Digit1'], web2: ['Digit2'], web3: ['Digit3'], web4: ['Digit4'],
-      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'],
+      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'], guide: ['KeyH'],
       pause: ['Escape', 'KeyP'], confirm: ['Enter', 'Space'], back: ['Escape', 'Backspace'],
       menuUp: ['ArrowUp', 'KeyW'], menuDown: ['ArrowDown', 'KeyS'], menuLeft: ['ArrowLeft', 'KeyA'], menuRight: ['ArrowRight', 'KeyD'],
       tabNext: ['Tab', 'KeyE'], tabPrev: ['KeyQ'],
@@ -126,7 +126,7 @@
     get(k, d) { try { const v = root.localStorage && root.localStorage.getItem('ao_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return k in memStore ? memStore[k] : d; } },
     set(k, v) { try { root.localStorage.setItem('ao_' + k, JSON.stringify(v)); } catch (e) { memStore[k] = v; } },
   };
-  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true }, Game.store.get('settings', {}));
+  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true }, Game.store.get('settings', {}));
   Game.saveSettings = () => Game.store.set('settings', Game.settings);
 
   // --------------------------------------------------------------- shared state

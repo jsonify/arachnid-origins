@@ -32,7 +32,7 @@ Never call `ctx.save/restore` imbalance: core wraps each drawer in save/restore 
 
 ## Input — `Game.input`
 `down(action)`, `pressed(action)`, `released(action)`, `axis()` -> `{x,y}`, `mouse` (`x,y` screen; `wx,wy` world; `down,pressed,released`), `anyPressed()`.
-Actions: up/down/left/right (WASD/arrows), `sprint` (Shift), `spin` (Space), `bite` (J or left mouse), `interact` (E), `rest` (R), `web1..web4` (1-4), `map` (M), `codex` (B), `science` (F), `zoomOut` (Z, handled by core), `pause` (Esc/P), menu nav actions `menuUp/menuDown/menuLeft/menuRight/confirm/back/tabNext/tabPrev`.
+Actions: up/down/left/right (WASD/arrows; with `Game.settings.mouseAim` (default on) W/S move toward/away from the cursor, A/D strafe, and the spider always faces the mouse), `guide` (H, toggles the HUD key guide), `sprint` (Shift), `spin` (Space), `bite` (J or left mouse), `interact` (E), `rest` (R), `web1..web4` (1-4), `map` (M), `codex` (B), `science` (F), `zoomOut` (Z, handled by core), `pause` (Esc/P), menu nav actions `menuUp/menuDown/menuLeft/menuRight/confirm/back/tabNext/tabPrev`.
 Test injection: `Game.input.inject.keyDown('KeyW')`, `.keyUp`, `.click(x,y)`.
 
 ## Camera — `Game.camera`
