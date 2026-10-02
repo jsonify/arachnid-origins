@@ -3731,7 +3731,7 @@
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
   const LEG_ATT = [[0.50, 0.30], [0.28, 0.34], [0.06, 0.34], [-0.16, 0.30]];
-  const LEG_ANG = [48, 80, 112, 150].map(d => d * Math.PI / 180);
+  const LEG_ANG = [30, 54, 126, 152].map(d => d * Math.PI / 180);
   const LEG_LEN = [2.55, 2.25, 2.2, 2.7];
   // stage palettes: carapace, abdomen, dark outline/pigment, mark, leg, leg-dark
   const PAL = [
@@ -3742,9 +3742,10 @@
     { cara: '#46291d', abd: '#522f20', dark: '#1d100a', mark: '#e6b457', leg: '#3c2216', legD: '#170c06', eye: '#0a0503' },
   ];
   const CAMO = '#7d7260';
-  const LIGHT = { x: -0.55, y: -0.83 };
+  const LIGHT = { x: -0.55, y: -0.83 };   // light comes from the upper-left
   const VS = 1.22;      // visual scale of the sprite relative to the collision radius
-  const LEGBEND = 1.3;  // total leg length vs. relaxed reach (more bend = more visible knees)      // light comes from the upper-left
+  const LEGBEND = 1.02; // total leg length vs. relaxed reach (more bend = more visible knees)
+  const KNEE_FWD = 0.7; // how far fore/aft (vs. straight out) the knees prefer to bow: front pairs back, rear pairs forward
 
   const has = (o, f) => !!(o && typeof o[f] === 'function');
   const num = (v, d) => (typeof v === 'number' && isFinite(v)) ? v : d;
@@ -4561,14 +4562,16 @@
       let dx = fx - ax, dy = fy - ay, d = Math.hypot(dx, dy) || 0.001;
       const reach = L * 2 * 0.985 * (1 - 0.07 * lift);
       if (d > reach) { fx = ax + dx / d * reach; fy = ay + dy / d * reach; dx = fx - ax; dy = fy - ay; d = reach; }
-      else if (d < R * 0.4) { const q = R * 0.4 / d; fx = ax + dx * q; fy = ay + dy * q; dx = fx - ax; dy = fy - ay; d = R * 0.4; }
+      else { const dmin = Math.max(R * 0.4, reach * 0.55); if (d < dmin) { const q = dmin / d; fx = ax + dx * q; fy = ay + dy * q; dx = fx - ax; dy = fy - ay; d = dmin; } }   // a foot the body has run over can't fold the leg into a needle
       const ux = dx / d, uy = dy / d, a = d / 2, h = Math.sqrt(Math.max(0, L * L - a * a));
       const bx = ax + ux * a, by = ay + uy * a;
       const k1x = bx - uy * h, k1y = by + ux * h, k2x = bx + uy * h, k2y = by - ux * h;
-      // knees bulge away from the body's middle: front pairs forward, rear pairs backward (a fan of legs, no crossing)
-      const f1 = (k1x - ax) * ca + (k1y - ay) * sa, f2 = (k2x - ax) * ca + (k2y - ay) * sa;
+      // knees bulge outward, like a real spider seen from above: front pairs bow back-and-out, rear pairs bow forward-and-out.
+      // Judged against a fixed direction per pair (not the current foot line) so the knee never flips sides mid-stride.
+      const pf = k < 2 ? -KNEE_FWD : KNEE_FWD;
+      const o1 = (k1x - ax) * (ca * pf - sa * side) + (k1y - ay) * (sa * pf + ca * side), o2 = (k2x - ax) * (ca * pf - sa * side) + (k2y - ay) * (sa * pf + ca * side);
       let kx, ky;
-      if ((k < 2) === (f1 >= f2)) { kx = k1x; ky = k1y; } else { kx = k2x; ky = k2y; }
+      if (o1 >= o2) { kx = k1x; ky = k1y; } else { kx = k2x; ky = k2y; }
       if (lift > 0) { const ex = kx - bx, ey = ky - by, el = Math.hypot(ex, ey) || 1; kx += ex / el * lift * R * 0.22; ky += ey / el * lift * R * 0.22; }
       AX[i] = ax; AY[i] = ay; KX[i] = kx; KY[i] = ky; FX[i] = fx; FY[i] = fy; LF[i] = lift;
       MX[i] = kx + (fx - kx) * 0.68; MY[i] = ky + (fy - ky) * 0.68;
