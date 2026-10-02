@@ -1369,6 +1369,9 @@
     ctx.restore();
   }
 
+  // build version, small and muted (title: bottom-right corner; pause: under the Resume hint, clear of the minimap)
+  function drawVersion(ctx, x, y, align) { txt(ctx, 'v' + (C.VERSION || '?'), x, y, { size: 12, color: COL.text3, align, weight: 600 }); }
+
   function drawTitle(ctx) {
     const t = real();
     // darken the drifting world so the title reads
@@ -1410,6 +1413,7 @@
     const E = Game.edu;
     if (E && E.counts) { const c = E.counts(); txt(ctx, 'Facts discovered  ' + c.unlocked + ' / ' + c.total, W - 24, H - 24, { size: 13, color: COL.text3, align: 'right', weight: 600 }); }
     txt(ctx, 'Discoveries are kept between journeys', 24, H - 24, { size: 12, color: COL.text3, italic: true, font: SERIF });
+    drawVersion(ctx, W - 24, H - 46, 'right');
     ctx.restore();
   }
 
@@ -1514,6 +1518,7 @@
     const rects = pauseRects(), foc = ui.idx.pause || 0;
     PAUSE_ITEMS.forEach((it, i) => drawButton(ctx, rects[i], it.label, i === foc, { size: 18 }));
     let fx = W / 2 - 52; fx += keycap(ctx, 'Esc', fx, 590, { h: 22 }) + 8; txt(ctx, 'Resume', fx, 606, { size: 13, color: COL.text3 });
+    drawVersion(ctx, W / 2, 634, 'center');
     ctx.restore();
   }
 
