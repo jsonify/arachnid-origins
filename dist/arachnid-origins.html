@@ -26,7 +26,20 @@
 
   // ---------------------------------------------------------------- constants
   const C = Game.C = {
-    VERSION: '1.0.0',           // shown on the title and pause screens; keep in step with package.json (tools/build.js checks)
+    VERSION: '1.1.0',           // shown on the title and pause screens; keep in step with package.json and CHANGELOG[0] (tools/check_version.js checks)
+    // newest first; shown in Settings > Changelog. Add an entry with `node tools/bump.js <major|minor|patch> "what changed"`
+    CHANGELOG: [
+      { version: '1.1.0', date: '2026-10-05', notes: [
+        'Added this Changelog, in Settings.',
+        'Fixed the "Catch a flying insect in a web" objective, which never completed when a flyer was caught.',
+      ] },
+      { version: '1.0.0', date: '2026-10-05', notes: [
+        'First versioned release.',
+        'Brood and Survival modes, with sibling revives in Brood.',
+        'Defeat the Widow Matriarch to unlock the Black Widow as a playable spider.',
+        'Mouse-aim controls and an on-screen key guide.',
+      ] },
+    ],
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle
@@ -8996,6 +9009,9 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
 
   // ------------------------------------------------------------------- objectives
   // reward totals are ~40-45% of each stage's growthNeeded (eating covers the rest)
+  // creatures.trap() grounds a creature (flying=false, old value kept in wasFlying) before web:trapped fires,
+  // so "was it a flyer?" can't read c.flying: a flying kind, or anything caught mid-flight, counts
+  const wasFlyer = (c) => !!(c && (c.wasFlying || c.flying || (c.k && c.k.flying)));
   const rainy = () => { const w = Game.world && Game.world.weather; return !!(w && (w.type === 'rain' || w.type === 'drizzle') && (w.intensity == null || w.intensity > 0.15)); };
   const OBJECTIVES = [
     [ // hatchling
@@ -9018,7 +9034,7 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     ],
     [ // sub-adult
       { id: 'a_orb',     text: 'Build an orb web',                                  goal: 1, reward: 35, ev: 'web:spun', match: { type: 'orb' } },
-      { id: 'a_flyer',   text: 'Catch a flying insect in a web',                    goal: 1, reward: 55, ev: 'web:trapped', match: (d) => !!(d && d.creature && d.creature.flying) },
+      { id: 'a_flyer',   text: 'Catch a flying insect in a web',                    goal: 1, reward: 55, ev: 'web:trapped', match: (d) => wasFlyer(d && d.creature) },
       { id: 'a_widow',   text: 'Defeat the Widow Matriarch in her lair (Old Oak Bark)', goal: 1, reward: 60, ev: 'boss:defeated', skip: () => !!(Game.unlocks && Game.unlocks.has('widow')) },
       { id: 'a_garden',  text: 'Visit the Flower Garden',                           goal: 1, reward: 40, ev: 'zone:enter', match: { zone: 'garden' }, visited: 'garden' },
       { id: 'a_rain',    text: 'Endure a rainstorm',                                goal: 20, reward: 50, track: 'rain', unit: 's' },
@@ -10190,7 +10206,8 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
   // --------------------------------------------------------------- the module
   const ui = {
     priority: 100, alwaysUpdate: true,
-    sub: null,                 // title/pause sub-panels: settings | mode | species | howto | credits | confirmQuit
+    sub: null,                 // title/pause sub-panels: settings | changelog | mode | species | howto | credits | confirmQuit
+    clScroll: 0, _clH: 0,      // changelog panel: scroll offset, and the content height measured on the last draw
     idx: {},                   // focus index per menu key
     pendingMode: 'brood',      // the mode picked on the first New Game step, while the spider is being chosen
     unlockCard: null,          // {id, t0, dur, played}: the "new spider unlocked" card
@@ -10303,6 +10320,7 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     { key: 'keyGuide', label: 'Key guide panel', type: 'toggle', desc: 'H in game' },
     { key: 'science', label: 'Science Mode', type: 'toggle', desc: 'F in game' },
     { key: 'hints', label: 'Gameplay hints', type: 'toggle' },
+    { key: 'changelog', label: 'Changelog', type: 'link', desc: 'What changed in each version' },
   ];
 
   const titleRects = () => listRects(TITLE_ITEMS.length, W / 2, 312, 330, 48, 11);
@@ -10476,10 +10494,12 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
       return;
     }
     if (sub === 'species' && nav.back) { sfx('ui_back'); ui.sub = 'mode'; return; }   // back to the mode cards
+    if (sub === 'changelog' && nav.back) { sfx('ui_back'); ui.sub = 'settings'; return; }   // back to the settings rows
     if (nav.back || (owner === 'paused' && nav.pause)) { sfx('ui_back'); ui.sub = null; return; }
     if (sub === 'settings') return updateSettings(nav);
     if (sub === 'mode') return updateMode(nav);
     if (sub === 'species') return updateSpecies(nav);
+    if (sub === 'changelog') return updateChangelog(nav);
     // howto / credits: a single Back button
     const pl = subPanelBox(sub), br = subBackRect(pl.y, pl.h);
     if (nav.confirm || (nav.click && inRect(nav.mx, nav.my, br))) { sfx('ui_back'); ui.sub = null; }
@@ -10560,8 +10580,9 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
       if (def.type === 'slider') {
         let dv = 0; if (nav.left) dv = -0.05; if (nav.right) dv = 0.05;
         if (dv) { setSetting(def.key, Math.round(clamp((s[def.key] || 0) + dv, 0, 1) * 100) / 100); tickSlider(); }
-      } else if (nav.left || nav.right) { setSetting(def.key, !s[def.key]); sfx('ui_click'); }
+      } else if ((nav.left || nav.right) && def.type === 'toggle') { setSetting(def.key, !s[def.key]); sfx('ui_click'); }
       if (nav.confirm && def.type === 'toggle') { setSetting(def.key, !s[def.key]); sfx('ui_click'); }
+      if (nav.confirm && def.type === 'link') { openChangelog(); return; }
     } else if (nav.confirm) { sfx('ui_back'); ui.sub = null; return; }
     if (nav.click) {
       for (let k = 0; k < L.rows.length; k++) {
@@ -10569,10 +10590,21 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
         if (row.def.type === 'slider') {
           const hit = { x: row.track.x - 10, y: row.r.y, w: row.track.w + 20, h: row.r.h };
           if (inRect(nav.mx, nav.my, hit)) { ui.idx[key] = k; ui.dragging = row.def.key; setSetting(row.def.key, Math.round(clamp((nav.mx - row.track.x) / row.track.w, 0, 1) * 100) / 100); tickSlider(); return; }
-        } else if (inRect(nav.mx, nav.my, row.r)) { ui.idx[key] = k; setSetting(row.def.key, !s[row.def.key]); sfx('ui_click'); return; }
+        } else if (inRect(nav.mx, nav.my, row.r)) { ui.idx[key] = k; if (row.def.type === 'link') openChangelog(); else { setSetting(row.def.key, !s[row.def.key]); sfx('ui_click'); } return; }
       }
       if (inRect(nav.mx, nav.my, L.back)) { sfx('ui_back'); ui.sub = null; }
     }
+  }
+  function openChangelog() { sfx('ui_click'); ui.sub = 'changelog'; ui.clScroll = 0; }
+  // Settings > Changelog: newest version first; wheel / up / down scroll, Esc / Back / Enter return to Settings
+  function changelogView(b) { return { x: b.x + 40, y: b.y + 78, w: b.w - 80, h: b.h - 78 - 78 }; }
+  function updateChangelog(nav) {
+    const b = subPanelBox('changelog'), v = changelogView(b), max = Math.max(0, ui._clH - v.h);
+    if (nav.wheel) ui.clScroll += nav.wheel * 60;
+    if (nav.up) ui.clScroll -= 50;
+    if (nav.down) ui.clScroll += 50;
+    ui.clScroll = clamp(ui.clScroll, 0, max);
+    if (nav.confirm || (nav.click && inRect(nav.mx, nav.my, subBackRect(b.y, b.h)))) { sfx('ui_back'); ui.sub = 'settings'; }
   }
   function tickSlider() { if (real() - ui._sliderT > 0.07) { ui._sliderT = real(); sfx('ui_hover'); } }
 
@@ -11415,6 +11447,7 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     if (sub === 'mode') return modeLayout().b;
     if (sub === 'species') return speciesLayout().b;
     if (sub === 'howto') return { x: (W - 900) / 2, y: 46, w: 900, h: 628 };
+    if (sub === 'changelog') return { x: (W - 760) / 2, y: 46, w: 760, h: 628 };
     return { x: (W - 680) / 2, y: 100, w: 680, h: 520 };
   }
   function drawSub(ctx) {
@@ -11423,13 +11456,14 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     if (sub === 'confirmQuit') return drawConfirmQuit(ctx);
     const b = subPanelBox(sub);
     panel(ctx, b.x, b.y, b.w, b.h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
-    const title = { settings: 'Settings', mode: 'Choose your journey', species: 'Choose your spider', howto: 'How to Play', credits: 'Credits' }[sub];
+    const title = { settings: 'Settings', mode: 'Choose your journey', species: 'Choose your spider', howto: 'How to Play', credits: 'Credits', changelog: 'Changelog' }[sub];
     txt(ctx, title, W / 2, b.y + 48, { size: 30, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.35)'; ctx.beginPath(); ctx.moveTo(b.x + 60, b.y + 62); ctx.lineTo(b.x + b.w - 60, b.y + 62); ctx.stroke();
     if (sub === 'settings') drawSettings(ctx, b);
     else if (sub === 'mode') drawMode(ctx, b);
     else if (sub === 'species') drawSpecies(ctx, b);
     else if (sub === 'howto') drawHowTo(ctx, b);
+    else if (sub === 'changelog') drawChangelog(ctx, b);
     else drawCredits(ctx, b);
     if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode' && sub !== 'species', { size: 17 });
   }
@@ -11475,6 +11509,29 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     txt(ctx, 'Left / Right to choose  \u00b7  Enter to begin  \u00b7  Esc to go back  \u00b7  your choice is remembered', W / 2, b.y + b.h - 86, { size: 12, color: COL.text3, align: 'center' });
   }
 
+  function drawChangelog(ctx, b) {
+    const v = changelogView(b), list = C.CHANGELOG || [];
+    ctx.save(); ctx.beginPath(); ctx.rect(v.x - 6, v.y, v.w + 12, v.h); ctx.clip();
+    let y = v.y - ui.clScroll;
+    list.forEach((e, i) => {
+      if (i) { ctx.strokeStyle = 'rgba(255,205,130,0.18)'; ctx.beginPath(); ctx.moveTo(v.x, y + 6); ctx.lineTo(v.x + v.w, y + 6); ctx.stroke(); y += 22; }
+      const cur = e.version === C.VERSION;
+      txt(ctx, 'v' + e.version, v.x, y + 20, { size: 22, font: SERIF, weight: 700, color: cur ? COL.amberHi : COL.text });
+      if (cur) txt(ctx, 'CURRENT', v.x + 84, y + 19, { size: 11, weight: 700, color: COL.amber });
+      txt(ctx, e.date || '', v.x + v.w, y + 19, { size: 13, color: COL.text3, align: 'right', weight: 600 });
+      y += 34;
+      (e.notes || []).forEach(n => {
+        ctx.fillStyle = COL.amber; ctx.beginPath(); ctx.arc(v.x + 5, y + 11, 2.5, 0, 7); ctx.fill();
+        y = para(ctx, n, v.x + 20, y, v.w - 36, { size: 14.5, lh: 20, color: COL.text2 }) + 5;
+      });
+    });
+    ui._clH = y + ui.clScroll - v.y + 4;
+    ctx.restore();
+    const max = ui._clH - v.h;
+    if (max > 0) { const th = Math.max(30, v.h * v.h / ui._clH), ty = v.y + (v.h - th) * (ui.clScroll / max); rr(ctx, v.x + v.w + 12, ty, 4, th, 2); ctx.fillStyle = 'rgba(255,205,130,0.4)'; ctx.fill(); }
+    txt(ctx, (max > 0 ? 'Scroll or \u2191 \u2193 for older versions  \u00b7  ' : '') + 'Esc back', W / 2, b.y + b.h - 72, { size: 11, color: COL.text3, align: 'center' });
+  }
+
   function drawSettings(ctx, L) {
     const foc = ui.idx.settings || 0, s = Game.settings, t = real();
     L.rows.forEach((row, i) => {
@@ -11489,6 +11546,8 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
         ctx.strokeStyle = 'rgba(255,255,255,0.14)'; rr(ctx, tr.x + 0.5, tr.y + 0.5, tr.w - 1, tr.h - 1, 6); ctx.stroke();
         const kx = tr.x + tr.w * v; ctx.beginPath(); ctx.arc(kx, tr.y + tr.h / 2, f ? 10 : 8, 0, 7); ctx.fillStyle = '#fff1d4'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = COL.amber; ctx.stroke();
         txt(ctx, Math.round(v * 100) + '%', r.x + r.w - 6, r.y + r.h / 2 + 1, { size: 15, weight: 700, color: COL.text2, align: 'right', base: 'middle' });
+      } else if (def.type === 'link') {
+        txt(ctx, 'v' + (C.VERSION || '?') + '  \u203a', r.x + r.w - 10, r.y + r.h / 2 + 1, { size: 15, weight: 700, color: f ? COL.amberHi : COL.text2, align: 'right', base: 'middle' });
       } else {
         const on = !!s[def.key], sw = row.sw;
         rr(ctx, sw.x, sw.y, sw.w, sw.h, sw.h / 2); ctx.fillStyle = on ? 'rgba(242,180,90,0.9)' : 'rgba(0,0,0,0.55)'; ctx.fill();

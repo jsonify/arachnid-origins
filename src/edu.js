@@ -359,6 +359,9 @@
 
   // ------------------------------------------------------------------- objectives
   // reward totals are ~40-45% of each stage's growthNeeded (eating covers the rest)
+  // creatures.trap() grounds a creature (flying=false, old value kept in wasFlying) before web:trapped fires,
+  // so "was it a flyer?" can't read c.flying: a flying kind, or anything caught mid-flight, counts
+  const wasFlyer = (c) => !!(c && (c.wasFlying || c.flying || (c.k && c.k.flying)));
   const rainy = () => { const w = Game.world && Game.world.weather; return !!(w && (w.type === 'rain' || w.type === 'drizzle') && (w.intensity == null || w.intensity > 0.15)); };
   const OBJECTIVES = [
     [ // hatchling
@@ -381,7 +384,7 @@
     ],
     [ // sub-adult
       { id: 'a_orb',     text: 'Build an orb web',                                  goal: 1, reward: 35, ev: 'web:spun', match: { type: 'orb' } },
-      { id: 'a_flyer',   text: 'Catch a flying insect in a web',                    goal: 1, reward: 55, ev: 'web:trapped', match: (d) => !!(d && d.creature && d.creature.flying) },
+      { id: 'a_flyer',   text: 'Catch a flying insect in a web',                    goal: 1, reward: 55, ev: 'web:trapped', match: (d) => wasFlyer(d && d.creature) },
       { id: 'a_widow',   text: 'Defeat the Widow Matriarch in her lair (Old Oak Bark)', goal: 1, reward: 60, ev: 'boss:defeated', skip: () => !!(Game.unlocks && Game.unlocks.has('widow')) },
       { id: 'a_garden',  text: 'Visit the Flower Garden',                           goal: 1, reward: 40, ev: 'zone:enter', match: { zone: 'garden' }, visited: 'garden' },
       { id: 'a_rain',    text: 'Endure a rainstorm',                                goal: 20, reward: 50, track: 'rain', unit: 's' },

@@ -1,9 +1,11 @@
 {
   "name": "arachnid-origins",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "",
   "main": "index.js",
   "scripts": {
+    "bump": "node tools/bump.js",
+    "check:version": "node tools/check_version.js origin/main",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
