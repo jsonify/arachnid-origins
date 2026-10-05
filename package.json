@@ -4,7 +4,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "node tools/build.js",
     "bump": "node tools/bump.js",
     "check:version": "node tools/check_version.js origin/main",
     "test": "echo \"Error: no test specified\" && exit 1"
