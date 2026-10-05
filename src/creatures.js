@@ -285,6 +285,20 @@
     fact: 'Adult male spiders are smaller than females and carry enlarged, boxing-glove-shaped pedipalps for transferring sperm. A male tracks a female by the pheromones on her silk and courts her with careful leg-waving or by plucking her web in a special rhythm, so that she recognizes a suitor rather than dinner.',
     description: 'A fellow adult, glowing with pheromone. Approach with care, and make sure you are well fed.',
   });
+  // ---------------------------------------------------------------- boss
+  // The Widow Matriarch guards her lair in the Old Oak Bark. She is a creature like any other (drawn, bitten and killed here) but
+  // her brain is boss.js: `ai: 'boss'` hands her thinking to Game.boss.think, and damage to her goes through Game.boss.onHurt.
+  // Beating her unlocks the Black Widow as a playable spider. `attack` holds her base numbers for boss.js.
+  def({
+    id: 'widow', name: 'Widow Matriarch', latin: 'Latrodectus mactans (adult female)', role: 'predator', tier: 4, spider: true, boss: true, noRespawn: true,
+    sizeText: '8-13 mm body, legs span about 4 cm', radius: 30, hp: 340, armor: 0.12, speed: 62, chase: 130, flee: 130, detection: 420, maxPrey: 99, leash: 99999,
+    activity: 'any', ext: 3.2, bodyR: 1.5, shadow: [2.4, 1.4], trap: null,
+    attack: { reach: 12, windup: 0.55, cooldown: 1.2, dmg: 16, lunge: 2.4 },
+    diet: ['flies', 'beetles', 'crickets', 'other spiders'], habitat: ['bark'],
+    value: { hunger: 0, growth: 0 }, danger: 14, color: '#17131a', color2: '#d4141c',
+    fact: 'Black widows (Latrodectus) are shy, nocturnal spiders that build a tangle of strong, sticky silk in dark, sheltered spots and hang upside down in it, which shows the red hourglass on the underside of the abdomen: a warning to predators. Their venom holds latrotoxin, a neurotoxin that is far more dangerous to people than most spider venom, though the spiders bite mainly when pressed and bites are rarely deadly. Females are much larger than males; they sometimes eat a mate after mating, which is how the group got its name, though it happens less often than legend says.',
+    description: 'The queen of the Old Oak Bark: a huge, glossy-black hunter who rules a lair of tangled silk. She lunges, spits sticky silk and slams the ground, and each move shows first. Dodge, then bite her while she recovers. Beat her to unlock the Black Widow.',
+  });
 
   // resolve the diet/eats masks once all kinds exist
   KIND_LIST.forEach(k => { let m = 0; for (let i = 0; i < k.eats.length; i++) { const t = KINDS[k.eats[i]]; if (t) m |= t.bit; } k.eatMask = m; k.isFlyer = !!(k.flying || k.canFly); });
@@ -1084,9 +1098,38 @@
   SPR.kin = function (ctx) { orbWeaver(ctx, false, '#d79a45', '#b87a35', '#e8b45a', '#5a3a1a'); };
   SPR.mate = function (ctx) { orbWeaver(ctx, true, '#a8703a', '#8a4a22', '#d8a860', '#3a2008'); };
 
+  // Widow Matriarch: glossy black, globular abdomen, red spot above the spinnerets. When she rears up to strike (F.tele) her front legs lift
+  // and she shows the red hourglass on her underside, the warning every move of hers starts with.
+  const WID_XO = [0, 0, 0, 0];
+  SPR.widow = function (ctx) {
+    const tl = F.tele, show = clamp(max(tl * 1.5, F.dead * 0.8), 0, 1);
+    WID_XO[0] = tl * 0.7; WID_XO[1] = tl * 0.3; WID_XO[3] = -tl * 0.25;
+    spiderLegs(ctx, 1.12 + tl * 0.05, WID_XO, 0.4, '#0a0608', '#3b2d36', 0.14);
+    // palps + fangs
+    ctx.strokeStyle = '#1c141a'; ctx.lineWidth = max(0.12, F.px); ctx.lineCap = 'round'; ctx.beginPath();
+    ctx.moveTo(1.4, 0.2); ctx.lineTo(1.95 + F.open * 0.15, 0.32 + sin(F.t * 5) * 0.03); ctx.moveTo(1.4, -0.2); ctx.lineTo(1.95 + F.open * 0.15, -0.32 - sin(F.t * 5) * 0.03); ctx.stroke();
+    // globular abdomen
+    shade(ctx, -1.2, 0, 1.2, 1.12, 0, '#15111b', '#5d596c', '#030204');
+    fe(ctx, '#d4141c', -2.1, 0, 0.2, 0.15);
+    fe(ctx, 'rgba(255,120,96,0.45)', -2.14, -0.04, 0.09, 0.05);
+    if (show > 0.02) {   // the hourglass: two triangles meeting at the waist
+      ctx.globalAlpha *= show; ctx.fillStyle = '#e5171f';
+      ctx.beginPath(); ctx.moveTo(-0.55, -0.4); ctx.lineTo(-0.55, 0.4); ctx.lineTo(-1.2, 0.05); ctx.lineTo(-1.85, 0.4); ctx.lineTo(-1.85, -0.4); ctx.lineTo(-1.2, -0.05); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha /= show;
+    }
+    gloss(ctx, -1.2, 0, 1.2, 1.12, 0.8);
+    if (F.detail) { ctx.strokeStyle = 'rgba(120,112,140,0.35)'; ctx.lineWidth = 0.03; ctx.beginPath(); for (let i = 0; i < 30; i++) { const a = (i / 30) * TAU, x = -1.2 + cos(a) * 1.2, y = sin(a) * 1.12; ctx.moveTo(x, y); ctx.lineTo(x + cos(a) * 0.07, y + sin(a) * 0.07); } ctx.stroke(); }
+    // cephalothorax
+    shade(ctx, 0.62, 0, 0.86, 0.66, 0, '#1b1621', '#68627a', '#050408');
+    gloss(ctx, 0.62, 0, 0.86, 0.66, 0.6);
+    fe(ctx, '#251c29', 1.5, 0.15, 0.22, 0.14); fe(ctx, '#251c29', 1.5, -0.15, 0.22, 0.14);
+    ctx.strokeStyle = '#7a1f1c'; ctx.lineWidth = max(0.07, F.px); ctx.beginPath(); ctx.moveTo(1.66, 0.14); ctx.lineTo(1.9 + F.open * 0.2, 0.2 + F.open * 0.1); ctx.moveTo(1.66, -0.14); ctx.lineTo(1.9 + F.open * 0.2, -0.2 - F.open * 0.1); ctx.stroke();
+    spiderEyes(ctx, 1.0, 0.1);
+  };
+
   // ================================================================== DRAWING
   // measured sprite extents (radial extent `ext` and x-centre `cx`, unit space) used to fit icons
-  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.55,3.04],"jumper":[0.48,2.35],"kin":[0.58,2.77],"mate":[0.62,2.87]};
+  const ICON = {"springtail":[0.55,2.52],"mite":[0.24,1.68],"aphid":[0.66,2.26],"midge":[0.15,2.45],"fruitfly":[-0.11,2.65],"ant":[0.47,2.55],"pillbug":[0.35,2.28],"moth":[0.44,2.44],"cricket":[0.94,4.02],"caterpillar":[-0.28,2.99],"grasshopper":[0.32,2.99],"beetle":[0.4,1.99],"centipede":[-0.4,4.67],"wasp":[0.01,3.27],"bird":[-0.27,3.03],"mantis":[0.06,3.71],"rove":[0.44,2.92],"ground":[0.95,2.9],"wolf":[0.55,3.04],"jumper":[0.48,2.35],"kin":[0.58,2.77],"mate":[0.62,2.87],"widow":[0.55,3.3]};
   KIND_LIST.forEach(k => { const m = ICON[k.id]; k.cx = m ? m[0] : 0; k.ext = m ? m[1] : 2; if (k.bodyR == null) k.bodyR = 1.6; });
   const LIGHT_X = -0.55, LIGHT_Y = -0.83;
 
@@ -1160,7 +1203,11 @@
       const sz = max(r * 0.9, 9 / zoom), pop = min(1, (0.9 - c.alertT + 0.25) * 6), bob = sin(T * 12) * sz * 0.1;
       drawBang(ctx, c.x, c.y - lift - r * k.bodyR * 0.9 - sz * 1.1 + bob, sz * clamp(pop, 0.2, 1), c.alertCol || '#ffcf3a', min(1, c.alertT * 3));
     }
-    if (c.hitT > 0 && c.hp < c.maxHp && k.id !== 'bird') {
+    if (c.venomT > 0) {   // poisoned: a faint violet pulse
+      ctx.fillStyle = 'rgba(176,96,236,' + (0.16 + 0.1 * sin(T * 9 + c.seed * 6)).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(c.x, c.y - lift, r * k.bodyR * 0.95, 0, TAU); ctx.fill();
+    }
+    if (c.hitT > 0 && c.hp < c.maxHp && k.id !== 'bird' && !k.boss) {
       const w = clamp(r * 2.4, 10, 40), h = 2.4 / zoom, bx = c.x - w / 2, by = c.y - lift - r * k.bodyR - 4 / zoom;
       ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(bx - 0.5 / zoom, by - 0.5 / zoom, w + 1 / zoom, h + 1 / zoom);
       ctx.fillStyle = c.hp / c.maxHp > 0.4 ? '#9be36a' : '#e8503a'; ctx.fillRect(bx, by, w * clamp(c.hp / c.maxHp, 0, 1), h);
@@ -1244,6 +1291,7 @@
     F.air = o.flying != null ? o.flying : !!k.flying; F.curl = o.curl ? 1 : 0; F.atk = 0; F.open = 0.15 + 0.1 * sin(t * 2); F.bend = 0; F.detail = true; F.sil = !!o.silhouette; F.px = 0.6 / sc;
     if (k.id === 'wolf') F.seed = 0.8;  // show the mother with her spiderlings
     if (k.id === 'moth') F.seed = 0.3;
+    if (k.id === 'widow') F.tele = 0.8;  // rearing up, so the portrait shows her red hourglass
   }
   function drawKindIcon(ctx, kindId, x, y, size, opts) {
     const k = KINDS[kindId]; if (!k || !ctx) return;
@@ -1395,6 +1443,7 @@
       ax: 0, ay: 0, bx: 0, by: 0, trailDir: 1, trailWait: 0, avx: 0, avy: 0, avT: 0, grp: 0, noSci: false, awareT: 0, voiceT: 0, struggleSfx: 0,
       lockX: 0, lockY: 0, lockT: 0, strikeR: 0, shadowA: 0, shadowS: 1, skyA: 0, skyS: 1, phaseT: 0, hitRes: 0, dist: 0, ang2: 0, gatherT: 0, gx: 0, gy: 0,
       disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0, sac: 0, sacT: 0,
+      venomT: 0, venomDps: 0, noTurn: false,
     };
   }
   function create(k, x, y, o) {
@@ -1416,6 +1465,7 @@
     c.trailDir = 1; c.trailWait = 0; c.avx = 0; c.avy = 0; c.avT = 0; c.grp = 0; c.noSci = false; c.awareT = 0; c.voiceT = rnd() * 2; c.struggleSfx = 0;
     c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false; c.sac = 0; c.sacT = 0;
     c.spawnStage = S.stage; c.eatT = 0; c.rainWait = 0; c.flapT = 0; c.dx = 0; c.dy = 0; c.ax = x; c.ay = y; c.bx = x; c.by = y;
+    c.venomT = 0; c.venomDps = 0; c.noTurn = false;
     if (o) {
       if (o.state) c.state = o.state;
       if (o.hx != null) { c.hx = o.hx; c.hy = o.hy; }
@@ -1475,6 +1525,7 @@
   function hurt(c, dmg, by, src) {
     if (c.dead || dmg <= 0) return false;
     if (c.k.unique || c.sac) return false;
+    if (c.k.boss && Game.boss && Game.boss.onHurt) { dmg = Game.boss.onHurt(c, dmg, by); if (!(dmg > 0)) return false; }   // the boss may shrug a hit off (shielded) or take extra (stunned)
     c.hp -= dmg; c.flash = 0.25; c.hitT = 3.5;
     if (c.hp <= 0) return kill(c, by, src);
     if (c.state === 'idle') { c.state = 'wander'; c.t = 0.2; c.idleWhy = ''; }
@@ -1937,6 +1988,26 @@
     integrate(c, dt);
   }
 
+  // ================================================================= AI: boss + venom
+  // The boss's brain lives in boss.js (it sets c.vx / c.vy / c.angle and the pose fields c.tele / c.atk / c.open); here we only move the body.
+  function thinkBoss(c, dt) {
+    c.noTurn = true;   // boss.js decides where she faces (integrate() would turn her to face her velocity)
+    const B = Game.boss;
+    if (B && B.think) B.think(c, dt); else brake(c, dt, 8);
+    integrate(c, dt);
+  }
+  // A Black Widow's bite leaves poison working: for VENOM_T seconds the prey takes damage over time and is slowed. Returns true if it died of it.
+  const VENOM_T = 4;
+  function venomTick(c, dt) {
+    c.venomT -= dt;
+    if (c.k.boss) { c.venomT = 0; c.venomDps = 0; return false; }
+    c.hp -= c.venomDps * dt; c.hitT = max(c.hitT, 0.6);
+    if (c.hp <= 0) { kill(c, 'player'); return true; }   // credited to the player, so the meal still feeds them
+    const f = Math.exp(-2.2 * dt); c.vx *= f; c.vy *= f;
+    if (c.venomT <= 0) c.venomDps = 0;
+    return false;
+  }
+
   // ================================================================= AI: stuck in a web
   function thinkStuck(c, dt) {
     const k = c.k;
@@ -2278,6 +2349,7 @@
       if (!got) { const a = rnd() * TAU, r = rin + sqrt(rnd()) * (rout - rin); x = cx + cos(a) * r; y = cy + sin(a) * r; }
       if (x < 40 || y < 40 || x > C.WORLD_W - 40 || y > C.WORLD_H - 40) continue;
       if (pop.d[zoneIdx(x)] <= 0) continue;
+      if (Game.boss && Game.boss.inArena && Game.boss.inArena(x, y, 140)) continue;   // nothing wanders into the Matriarch's arena
       if (mode !== 1 && Game.camera.inView(x, y, 70)) continue;
       if (k.role === 'predator' && S.stage === 0 && hypot(x - C.SPAWN.x, y - C.SPAWN.y) < 1100) continue;
       if (S.P && mode !== 1 && hypot(x - S.P.x, y - S.P.y) < rin * 0.9) continue;
@@ -2295,7 +2367,7 @@
     else c.state = 'wander';
     if (k.flying) { c.flying = true; c.altT = k.altBase; c.alt = k.altBase; }
   }
-  KIND_LIST.forEach(k => { k.ai = k.id === 'bird' ? 'bird' : (k.id === 'kin' ? 'kin' : (k.id === 'mate' ? 'mate' : ((k.role === 'predator' || k.defends) ? 'hunter' : 'prey'))); });
+  KIND_LIST.forEach(k => { k.ai = k.boss ? 'boss' : (k.id === 'bird' ? 'bird' : (k.id === 'kin' ? 'kin' : (k.id === 'mate' ? 'mate' : ((k.role === 'predator' || k.defends) ? 'hunter' : 'prey')))); });
   function spawn(kindId, x, y, opts) {
     const k = KINDS[kindId]; if (!k) return null;
     const c = create(k, x, y, opts); if (!c) return null;
@@ -2480,6 +2552,10 @@
     if (killed) res.killed.push(c);
     else if (by === 'player') {
       const P = S.P;
+      if (P && P.venomPower > 0 && !k.boss) {   // a Black Widow's bite: poison keeps working (up to 3 bites stack)
+        const add = eff * P.venomPower / VENOM_T;
+        c.venomT = VENOM_T; c.venomDps = min(c.venomDps + add, add * 3);
+      }
       if (k.ai === 'hunter' && c.state !== 'stuck' && c.hp > c.maxHp * 0.28 && P && !P.dead && hostileToPlayer(c, P)) {
         c.state = 'hunt'; c.target = P; c.tIsP = true; c.targetId = 0; c.chaseT = 0; c.awareT = 8; c.alertT = 0.7; c.alertCol = '#ff5a3a';
         if (k.defends) recruitAnts(c);
@@ -2569,7 +2645,7 @@
           if ((c.state === 'hunt' || c.state === 'windup' || c.state === 'attack' || c.state === 'recover') && c.tIsP) thr = 0.45 + 0.55 * clamp(1 - d / (k.detection * 1.5), 0, 1);
           else { const rr = k.detection * 1.1; if (d < rr) thr = 0.36 * (1 - d / rr) * (k.defends ? 0.35 : 1); }
           thr *= clamp(0.45 + (k.attack ? k.attack.dmg : 8) / mh * 2.2, 0.45, 1);
-        }
+        } else if (k.ai === 'boss' && Game.boss && Game.boss.threat) thr = Game.boss.threat(c);
         if (thr > raw) raw = thr;
       }
       for (let i = 0; i < S.alarms.length; i++) raw = max(raw, ALARM_DANGER * clamp(S.alarms[i].life / 1.5, 0, 1));   // a sibling's warning keeps the heartbeat going a moment
@@ -2596,8 +2672,10 @@
     c.age += dt;
     if (c.alpha < 1) c.alpha = min(1, c.alpha + dt * 2.2);
     c.alertT -= dt; c.flash -= dt; c.hitT -= dt;
+    if (c.venomT > 0 && venomTick(c, dt)) return;
     if (c.state === 'stuck') { thinkStuck(c, dt); return; }
     switch (c.k.ai) {
+      case 'boss': thinkBoss(c, dt); break;
       case 'hunter': thinkHunter(c, dt); break;
       case 'bird': thinkBird(c, dt); break;
       case 'kin': thinkKin(c, dt); break;

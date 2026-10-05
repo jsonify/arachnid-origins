@@ -42,6 +42,17 @@
     { cara: '#5f3e29', abd: '#6c452c', dark: '#2e1b11', mark: '#d8ab5c', leg: '#573621', legD: '#26150b', eye: '#0e0805' },
     { cara: '#46291d', abd: '#522f20', dark: '#1d100a', mark: '#e6b457', leg: '#3c2216', legD: '#170c06', eye: '#0a0503' },
   ];
+  // Black Widow (Latrodectus mactans): the young are pale and striped with orange-red spots; they darken with every molt until the adult
+  // female is glossy black with a red spot above the spinnerets. `spot` is the red/orange of those spots and the hourglass.
+  const PAL_WIDOW = [
+    { cara: '#e3cc9c', abd: '#efdfba', dark: '#86663a', mark: '#fff3d4', spot: '#e8863a', leg: '#d4b984', legD: '#76562c', eye: '#1a120a' },
+    { cara: '#b8884e', abd: '#c9a068', dark: '#5c3b1c', mark: '#fff0cc', spot: '#e0702c', leg: '#a97b46', legD: '#4a2f17', eye: '#150e08' },
+    { cara: '#6c4c38', abd: '#7b5a42', dark: '#2e1d16', mark: '#e6d3b0', spot: '#e0582a', leg: '#5e4030', legD: '#241410', eye: '#100907' },
+    { cara: '#33262a', abd: '#3a2b30', dark: '#120a0e', mark: '#c9b8a4', spot: '#d8401f', leg: '#2e2226', legD: '#0f0809', eye: '#0a0506' },
+    { cara: '#1a1620', abd: '#1e1924', dark: '#050407', mark: '#8a8696', spot: '#d8141c', leg: '#2b2430', legD: '#08060a', eye: '#050305' },
+  ];
+  const PALS = { garden: PAL, widow: PAL_WIDOW };
+  const ABD_SHAPE = { garden: [1, 1], widow: [0.9, 1.22] };   // abdomen scale along / across the body: the widow's is round and globular
   const CAMO = '#7d7260';
   const LIGHT = { x: -0.55, y: -0.83 };   // light comes from the upper-left
   const VS = 1.22;      // visual scale of the sprite relative to the collision radius
@@ -61,6 +72,7 @@
     hp: 30, maxHp: 30, hunger: 80, hydration: 80, energy: 100, silk: 20, maxSilk: 20,
     growth: 0, growthNeeded: 60, upgrades: {},
     speedMul: 1, biteMul: 1, stealth: 1, damageTaken: 1, senseRadius: 60, drainMul: 1,
+    species: C.SPECIES[0], stealthBase: 1, venomPower: 0, tangleT: 0, tangleMul: 1,   // which spider this is (Game.C.SPECIES entry), stealth before night bonuses, poison share of a bite, silk-slow timer
     hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null, reviving: false, revives: 0,
     stateLabel: 'walking', mate: { found: false, courted: false, laid: false }, mateHint: null,
     // extras (documented in the report)
@@ -74,7 +86,7 @@
   let hatchT = 0, moltT = 0, courtT = 0, layT = 0, deathT = 0, endT = 0, victoryFired = false, gaitPhase = 0, abAng = 0, prevAng = 0;
   let sfxStepT = 0, trailT = 0, mateRetryT = 0, exhaustedFlag = false, dotBuf = 0, dotSrc = 'damage', hurtSfxT = 0, chooseWait = 0;
   let enterT = 0, exitCd = 0, restToggleCd = 0, noInputT = 0, statT = 0, lastGood = { x: 0, y: 0 };
-  let reviveSib = null, reviveCause = null, reviveLanded = false, reviveGlow = 0;
+  let reviveSib = null, reviveCause = null, reviveLanded = false, reviveGlow = 0, bellyK = 0;   // bellyK: 0..1 how much the underside (a widow's hourglass) shows while she hangs to spin or rests
   let sac = null, exuvia = null, pendingStage = 0, swapped = false, courtMateRef = null, layTarget = null, bodyBob = 0;
   const feet = [];     // per-leg gait state
   const trail = [];    // dragline trail points
@@ -97,23 +109,26 @@
       case 'exhaustion': return 'exhausted';
       case 'rain': case 'exposure': return 'exposure';
       case 'drowned': case 'fell': return src;
+      case 'widow': return 'widow';   // the Widow Matriarch boss
       default: return 'eaten';
     }
   }
 
   // ---- upgrades & stage stats ------------------------------------------------------
   P.applyUpgrades = function (keepRatio) {
-    const si = this.stageInfo, u = this.upgrades;
+    const si = this.stageInfo, u = this.upgrades, sm = (this.species && this.species.mods) || {};   // sm: this species' stat multipliers
     const hpR = this.maxHp > 0 ? this.hp / this.maxHp : 1;
     const silkR = this.maxSilk > 0 ? this.silk / this.maxSilk : 1;
-    this.speedMul = 1 + 0.08 * (u.speed || 0);
-    this.silkMul = 1 + 0.25 * (u.silk || 0);
-    this.stealth = clamp(1 - 0.2 * (u.camo || 0), 0.3, 1);
-    this.biteMul = 1 + 0.25 * (u.venom || 0);
+    this.speedMul = (1 + 0.08 * (u.speed || 0)) * (sm.speed || 1);
+    this.silkMul = (1 + 0.25 * (u.silk || 0)) * (sm.silk || 1);
+    this.stealthBase = clamp(1 - 0.2 * (u.camo || 0), 0.3, 1);
+    this.stealth = this.stealthBase;   // simulate() applies the species' night bonus on top
+    this.biteMul = (1 + 0.25 * (u.venom || 0)) * (sm.bite || 1);
+    this.venomPower = sm.venom || 0;
     this.damageTaken = Math.pow(0.9, u.carapace || 0);
     this.senseRadius = 60 + 110 * (u.vibration || 0);
     this.drainMul = Math.pow(0.85, u.metabolism || 0);
-    this.maxHp = si.maxHp * (1 + 0.2 * (u.carapace || 0));
+    this.maxHp = si.maxHp * (1 + 0.2 * (u.carapace || 0)) * (sm.hp || 1);
     this.maxSilk = si.maxSilk * this.silkMul;
     if (keepRatio) { this.hp = clamp(hpR * this.maxHp, 0, this.maxHp); this.silk = clamp(silkR * this.maxSilk, 0, this.maxSilk); }
     this.growthNeeded = si.growthNeeded;
@@ -123,6 +138,7 @@
     const sp = C.SPAWN;
     this.x = sp.x; this.y = sp.y; this.vx = 0; this.vy = 0; this.angle = -0.6; prevAng = this.angle;
     this.stage = 0; this.stageInfo = C.STAGES[0]; this.radius = C.STAGES[0].radius;
+    this.species = Game.speciesInfo(Game.state.species); this.tangleT = 0; this.tangleMul = 1; bellyK = 0;
     this.upgrades = {}; C.UPGRADES.forEach(u => { this.upgrades[u.id] = 0; });
     this.maxHp = 0; this.maxSilk = 0; this.hp = 0; this.silk = 0;
     this.applyUpgrades(false);
@@ -165,6 +181,14 @@
     this.silk = Math.max(0, this.silk - n); return true;
   };
   P.addSilk = function (n) { n = num(n, 0); this.silk = clamp(this.silk + n, 0, this.maxSilk); };
+  // Stuck in sticky silk (the Widow Matriarch's spit and the patches it leaves): move at `mul` x normal speed for `t` seconds.
+  // Calling it again extends the timer; the stronger (lower) slow wins while both last.
+  P.slow = function (t, mul) {
+    t = num(t, 0); mul = clamp(num(mul, 1), 0.2, 1);
+    if (t <= 0 || this.dead) return;
+    this.tangleMul = this.tangleT > 0 ? Math.min(this.tangleMul, mul) : mul;
+    this.tangleT = Math.max(this.tangleT, t);
+  };
 
   // ---- feeding, healing, damage -------------------------------------------------------------
   P.feed = function (hunger, growth, kind) {
@@ -320,7 +344,7 @@
   function doSwap() {
     swapped = true;
     const prev = P.stage;
-    exuvia = { x: P.x, y: P.y, ang: P.angle, r: P.radius, stage: prev, t: 0, camo: P.upgrades.camo || 0, feet: feet.map(f => ({ x: f.x, y: f.y, lift: 0 })), abAng: abAng };
+    exuvia = { x: P.x, y: P.y, ang: P.angle, r: P.radius, stage: prev, species: P.species.id, legK: P.species.leg || 1, t: 0, camo: P.upgrades.camo || 0, feet: feet.map(f => ({ x: f.x, y: f.y, lift: 0 })), abAng: abAng };
     const left = Math.max(0, P.growth - P.growthNeeded);
     P.stage = pendingStage; P.stageInfo = C.STAGES[P.stage];
     P.applyUpgrades(true);
@@ -487,6 +511,7 @@
     let spd = si.speed * P.speedMul, mod = 1;
     if (P.molting || P.moltTimer > 0) mod *= 0.5;
     if (exhaustedFlag) mod *= 0.62;
+    if (P.tangleT > 0) mod *= P.tangleMul;
     if (P.hunger < 12) mod *= 0.9;
     if (has(w, 'speedBonusAt')) { try { mod *= clamp(num(w.speedBonusAt(P.x, P.y), 1), 1, 2.5); } catch (e) { /* ignore */ } }
     if (sprint) mod *= SPRINT_MUL;
@@ -678,6 +703,8 @@
     const I = Game.input;
     P.invuln = Math.max(0, P.invuln - dt);
     biteCd = Math.max(0, biteCd - dt); hurtSfxT -= dt; exitCd -= dt;
+    if (P.tangleT > 0) { P.tangleT = Math.max(0, P.tangleT - dt); if (P.tangleT <= 0) P.tangleMul = 1; }
+    bellyK += (((spinT > 0 || P.resting) ? 1 : 0) - bellyK) * (1 - Math.exp(-5 * dt));
     if (P.moltTimer > 0) P.moltTimer = Math.max(0, P.moltTimer - dt);
     P.soft = P.molting ? 1 : (P.moltTimer > 0 ? 0.85 * P.moltTimer / MOLT_SOFT : 0);
     if (!P.molting) shiver *= Math.exp(-6 * dt);
@@ -730,6 +757,10 @@
 
     updateRadius(dt);
     computeHidden(sp);
+    { // a species may hide better after dusk (the Black Widow is a night hunter)
+      const w = world(), nb = P.species && P.species.mods && P.species.mods.nightStealth;
+      P.stealth = (nb && has(w, 'isNight') && w.isNight()) ? clamp(P.stealthBase * nb, 0.2, 1) : P.stealthBase;
+    }
     meters(dt * mScale, sp > 8, sprint);
     // visual state
     const curlT = (P.resting && sp < 6) ? 1 : 0;
@@ -776,7 +807,7 @@
   // ---- gait (alternating tetrapod, IK-style stepping) -------------------------------------------------------------------------------------
   function homeOf(i, out, curlV) {
     const k = i >> 1, s = (i & 1) ? 1 : -1, R = P.radius * VS, a = LEG_ANG[k], att = LEG_ATT[k];
-    const cf = Math.max(0.22, 1 - 0.42 * Math.min(curlV, 1) - 2.4 * Math.max(0, curlV - 1)), len = LEG_LEN[k] * 0.86 * cf;
+    const cf = Math.max(0.22, 1 - 0.42 * Math.min(curlV, 1) - 2.4 * Math.max(0, curlV - 1)), len = LEG_LEN[k] * 0.86 * cf * ((P.species && P.species.leg) || 1);
     const lx = att[0] + Math.cos(a) * len, ly = s * (att[1] + Math.sin(a) * len);
     const c = Math.cos(P.angle), sn = Math.sin(P.angle);
     out.x = P.x + (lx * c - ly * sn) * R; out.y = P.y + (lx * sn + ly * c) * R;
@@ -921,7 +952,7 @@
       const lx = att[0] * R, ly = side * att[1] * R * 0.85;
       const ax = st.x + ox + lx * ca - ly * sa, ay = st.y + oy + lx * sa + ly * ca;
       let fx = fl[i].x, fy = fl[i].y; const lift = fl[i].lift || 0;
-      const L = LEG_LEN[k] * R * 0.5 * LEGBEND;
+      const L = LEG_LEN[k] * R * 0.5 * LEGBEND * (st.legK || 1);
       let dx = fx - ax, dy = fy - ay, d = Math.hypot(dx, dy) || 0.001;
       const reach = L * 2 * 0.985 * (1 - 0.07 * lift);
       if (d > reach) { fx = ax + dx / d * reach; fy = ay + dy / d * reach; dx = fx - ax; dy = fy - ay; d = reach; }
@@ -1022,8 +1053,38 @@
     ctx.beginPath(); ctx.arc(x - lx * r * 0.25, y - ly * r * 0.25, r * 0.17, 0, TAU); ctx.fill();
   }
 
+  // Black Widow abdomen markings (abdomen space). The young carry cream stripes and orange-red spots that fade as she molts; the adult is
+  // glossy black with a red spot above the spinnerets. Her red hourglass is on the underside, so it only shows while she hangs belly-up
+  // to spin or rest (st.belly).
+  function widowMarks(ctx, st, pal, stg) {
+    const stripeA = [0.5, 0.85, 0.7, 0.4, 0][stg], nSpots = [3, 4, 5, 3, 0][stg];
+    if (stripeA > 0) {
+      ctx.strokeStyle = tint(pal.mark, st, 0, stripeA); ctx.lineWidth = 0.09; ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let j = 0; j < 3; j++) {   // curved stripes sweeping back from each flank
+        const x0 = -0.35 - j * 0.38;
+        ctx.moveTo(x0, -0.8 + j * 0.1); ctx.quadraticCurveTo(x0 - 0.32, -0.36, x0 - 0.12, -0.06);
+        ctx.moveTo(x0, 0.8 - j * 0.1); ctx.quadraticCurveTo(x0 - 0.32, 0.36, x0 - 0.12, 0.06);
+      }
+      ctx.stroke();
+    }
+    if (nSpots) {
+      ctx.fillStyle = tint(pal.spot, st, 0.05, 0.9);
+      for (let j = 0; j < nSpots; j++) { ctx.beginPath(); ctx.arc(-0.5 - j * 0.28, 0, 0.085 - j * 0.006, 0, TAU); ctx.fill(); }
+    }
+    if (stg >= 3) {   // the red spot above the spinnerets
+      const a = stg === 4 ? 1 : 0.55;
+      ctx.fillStyle = tint(pal.spot, st, 0, a); ctx.beginPath(); ctx.ellipse(-1.52, 0, 0.18, 0.14, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = tint('#ff7a5c', st, 0, 0.35 * a); ctx.beginPath(); ctx.ellipse(-1.56, -0.04, 0.09, 0.05, 0, 0, TAU); ctx.fill();
+    }
+    if (stg >= 3 && st.belly > 0.02) {   // the hourglass: two triangles meeting at the waist
+      ctx.fillStyle = tint(pal.spot, st, 0.05, 0.95 * st.belly * (stg === 4 ? 1 : 0.5));
+      ctx.beginPath(); ctx.moveTo(-0.62, -0.3); ctx.lineTo(-0.62, 0.3); ctx.lineTo(-0.92, 0.035); ctx.lineTo(-1.22, 0.3); ctx.lineTo(-1.22, -0.3); ctx.lineTo(-0.92, -0.035); ctx.closePath(); ctx.fill();
+    }
+  }
+
   function drawBody(ctx, st, pal) {
-    const stg = st.stage, mk = [0.35, 0.6, 0.75, 0.9, 1][stg];
+    const stg = st.stage, mk = [0.35, 0.6, 0.75, 0.9, 1][stg], widow = st.species === 'widow';
     const lx = LIGHT.x * st.ca + LIGHT.y * st.sa, ly = -LIGHT.x * st.sa + LIGHT.y * st.ca;   // light direction in local space
     const breathe = 1 + 0.02 * Math.sin(st.t * (st.resting ? 1.6 : 2.6)) + (st.pulse || 0);
     const bite = st.bite, chew = st.eat > 0 ? Math.sin(st.t * 38) * 0.5 + 0.5 : 0;
@@ -1049,13 +1110,16 @@
 
     // abdomen
     ctx.save();
-    ctx.translate(-0.5, 0); ctx.rotate(st.abAng); ctx.scale(0.86 * breathe, 0.86 * breathe);
+    const abd = ABD_SHAPE[st.species] || ABD_SHAPE.garden;
+    ctx.translate(-0.5, 0); ctx.rotate(st.abAng); ctx.scale(0.86 * breathe * abd[0], 0.86 * breathe * abd[1]);
     let g = ctx.createRadialGradient(lx * 0.45, ly * 0.45 - 0.0, 0.05, -0.85, 0, 1.05);
     g.addColorStop(0, tint(pal.abd, st, 0.28)); g.addColorStop(0.5, tint(pal.abd, st, 0)); g.addColorStop(1, tint(pal.abd, st, -0.32));
     abdPath(ctx); ctx.fillStyle = g; ctx.fill();
     ctx.save(); abdPath(ctx); ctx.clip();
     if (!st.shell) {
       // markings: cardiac folium + chevrons + flank bands, bolder with each stage; camouflage adds mottling
+      if (widow) widowMarks(ctx, st, pal, stg);
+      else {
       ctx.fillStyle = tint(pal.mark, st, 0, 0.55 * mk);
       ctx.beginPath(); ctx.moveTo(-0.12, 0); ctx.quadraticCurveTo(-0.55, -0.26 - stg * 0.025, -1.0, -0.2 - stg * 0.02); ctx.quadraticCurveTo(-1.45, -0.1, -1.55, 0);
       ctx.quadraticCurveTo(-1.45, 0.1, -1.0, 0.2 + stg * 0.02); ctx.quadraticCurveTo(-0.55, 0.26 + stg * 0.025, -0.12, 0); ctx.fill();
@@ -1082,6 +1146,7 @@
         ctx.fillStyle = tint(pal.dark, st, 0, 0.35);
         for (let j = 0; j < 4; j++) { ctx.beginPath(); ctx.arc(-0.7 - j * 0.22, (j & 1 ? 0.3 : -0.3), 0.05, 0, TAU); ctx.fill(); }
       }
+      }
       if (st.camo > 0) {
         for (let j = 0; j < 9 + st.camo * 6; j++) {
           const px = -0.15 - hash(j, 1) * 1.5, py = (hash(j, 2) - 0.5) * 1.5, rr = 0.04 + hash(j, 3) * 0.07;
@@ -1095,7 +1160,7 @@
     }
     // gloss
     if (!st.shell) {
-      ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + 0.05 * (st.carapace || 0) + st.softness * 0.1).toFixed(3) + ')';
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + 0.05 * (st.carapace || 0) + st.softness * 0.1 + (widow && stg >= 3 ? 0.1 * mk : 0)).toFixed(3) + ')';   // an adult widow is glossy
       ctx.beginPath(); ctx.ellipse(-0.75 + lx * 0.38, ly * 0.38, 0.42, 0.22, Math.atan2(ly, lx), 0, TAU); ctx.fill();
     }
     ctx.restore();
@@ -1119,7 +1184,7 @@
     cephPath(ctx); ctx.fillStyle = g; ctx.fill();
     ctx.save(); cephPath(ctx); ctx.clip();
     if (!st.shell) {
-      ctx.strokeStyle = tint(pal.mark, st, 0, 0.4 * mk + 0.1); ctx.lineWidth = 0.09; ctx.lineCap = 'round';
+      ctx.strokeStyle = tint(pal.mark, st, 0, (0.4 * mk + 0.1) * (widow && stg >= 3 ? 0.35 : 1)); ctx.lineWidth = 0.09; ctx.lineCap = 'round';
       if (stg >= 1) { ctx.beginPath(); ctx.moveTo(0.7, -0.2); ctx.quadraticCurveTo(0.1, -0.24, -0.45, -0.18); ctx.moveTo(0.7, 0.2); ctx.quadraticCurveTo(0.1, 0.24, -0.45, 0.18); ctx.stroke(); }
       ctx.strokeStyle = tint(pal.dark, st, 0, 0.55); ctx.lineWidth = 0.035;
       ctx.beginPath(); ctx.moveTo(-0.12, -0.07); ctx.lineTo(-0.28, 0); ctx.lineTo(-0.12, 0.07);   // thoracic fovea
@@ -1161,7 +1226,7 @@
 
   function drawSpider(ctx, st) {
     const R = st.r * st.scale * VS; if (R <= 0.01) return;
-    const pal = PAL[st.stage] || PAL[0];
+    const pal = (PALS[st.species] || PAL)[st.stage] || PAL[0];
     const ca = Math.cos(st.ang), sa = Math.sin(st.ang);
     st.ca = ca; st.sa = sa; st.camoK = (st.camo || 0) * 0.16; st.t = st.t || 0;
     const ox = ca * st.lunge * R - sa * st.bobLat * R, oy = sa * st.lunge * R + ca * st.bobLat * R;
@@ -1290,11 +1355,11 @@
   }
 
   // ---- shed skin ------------------------------------------------------------------------------------------------------------------------
-  const XST = { x: 0, y: 0, ang: 0, r: 5, scale: 1, stage: 0, feet: null, abAng: 0, softness: 0, flash: 0, alpha: 1, shell: true, camo: 0, carapace: 0, venom: false, deadK: 0, sx: 1, sy: 1, bobLat: 0, lunge: 0, bite: 0, eat: 0, drink: 0, resting: false, dance: false, pulse: 0, silkUp: 0, crack: 0, t: 0, camoK: 0 };
+  const XST = { species: 'garden', legK: 1, belly: 0, x: 0, y: 0, ang: 0, r: 5, scale: 1, stage: 0, feet: null, abAng: 0, softness: 0, flash: 0, alpha: 1, shell: true, camo: 0, carapace: 0, venom: false, deadK: 0, sx: 1, sy: 1, bobLat: 0, lunge: 0, bite: 0, eat: 0, drink: 0, resting: false, dance: false, pulse: 0, silkUp: 0, crack: 0, t: 0, camoK: 0 };
   function drawExuvia(ctx) {
     if (!exuvia) return;
     const e = exuvia, fade = clamp(1 - (e.t - 50) / 30, 0, 1); if (fade <= 0) return;
-    XST.x = e.x; XST.y = e.y; XST.ang = e.ang; XST.r = e.r; XST.stage = e.stage; XST.feet = e.feet; XST.abAng = e.abAng * 0.5; XST.alpha = fade * 0.9; XST.t = anim;
+    XST.x = e.x; XST.y = e.y; XST.ang = e.ang; XST.r = e.r; XST.stage = e.stage; XST.species = e.species; XST.legK = e.legK; XST.feet = e.feet; XST.abAng = e.abAng * 0.5; XST.alpha = fade * 0.9; XST.t = anim;
     drawSpider(ctx, XST);
   }
 
@@ -1334,7 +1399,7 @@
   }
 
   // ---- the player -------------------------------------------------------------------------------------------------------------------------------------
-  const ST = { x: 0, y: 0, ang: 0, r: 5, scale: 1, stage: 0, feet: feet, abAng: 0, softness: 0, flash: 0, alpha: 1, shell: false, camo: 0, carapace: 0, venom: false, deadK: 0, sx: 1, sy: 1, bobLat: 0, lunge: 0, bite: 0, eat: 0, drink: 0, resting: false, dance: false, pulse: 0, silkUp: 0, crack: 0, t: 0, camoK: 0 };
+  const ST = { species: 'garden', legK: 1, belly: 0, x: 0, y: 0, ang: 0, r: 5, scale: 1, stage: 0, feet: feet, abAng: 0, softness: 0, flash: 0, alpha: 1, shell: false, camo: 0, carapace: 0, venom: false, deadK: 0, sx: 1, sy: 1, bobLat: 0, lunge: 0, bite: 0, eat: 0, drink: 0, resting: false, dance: false, pulse: 0, silkUp: 0, crack: 0, t: 0, camoK: 0 };
   let sprintK = 0;
   function playerState() {
     const st = ST, R = P.radius, dtv = Math.min(0.05, Game.time.dt || 0.016);
@@ -1347,7 +1412,8 @@
       x += -Math.sin(ang) * w * R * 0.3; y += Math.cos(ang) * w * R * 0.3; ang += Math.sin(courtT * 5 + 1.2) * 0.2; st.dance = true;
     }
     st.x = x; st.y = y; st.ang = ang; st.r = R; st.stage = P.stage; st.t = anim; st.abAng = abAng;
-    st.camo = P.upgrades.camo || 0; st.carapace = P.upgrades.carapace || 0; st.venom = (P.upgrades.venom || 0) > 0;
+    st.species = P.species.id; st.legK = P.species.leg || 1; st.belly = bellyK;
+    st.camo = P.upgrades.camo || 0; st.carapace = P.upgrades.carapace || 0; st.venom = (P.upgrades.venom || 0) > 0 || P.venomPower > 0;
     st.softness = (P.molting && !swapped) ? 0 : P.soft;
     st.flash = flash; st.alpha = 1; st.shell = false;
     st.deadK = (P.dead || P.reviving) ? Math.min(1, deathT / 1.6) : reviveGlow * 0.7;
@@ -1374,6 +1440,60 @@
     ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, TAU); ctx.fill(); ctx.restore();
   }
 
+  // sticky silk clinging to the spider (P.slow): pale strands crossing the body, fading as the slow runs out
+  function drawTangle(ctx) {
+    if (!(P.tangleT > 0) || P.dead) return;
+    const a = clamp(P.tangleT / 0.5, 0, 1), R = P.radius * VS;
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(244,247,255,' + (0.75 * a).toFixed(3) + ')'; ctx.lineWidth = Math.max(0.3, R * 0.05);
+    ctx.beginPath();
+    for (let j = 0; j < 7; j++) {
+      const a0 = hash(j, 61) * TAU + Math.sin(anim * 4 + j) * 0.05, a1 = a0 + 2.1 + hash(j, 62) * 1.4;
+      ctx.moveTo(P.x + Math.cos(a0) * R * 2.1, P.y + Math.sin(a0) * R * 2.1);
+      ctx.quadraticCurveTo(P.x + Math.cos((a0 + a1) / 2) * R * 0.3, P.y + Math.sin((a0 + a1) / 2) * R * 0.3, P.x + Math.cos(a1) * R * 2.1, P.y + Math.sin(a1) * R * 2.1);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+
+  // ---- portraits (species roster in the Codex) ------------------------------------------------------------------------------------
+  // P.drawPortrait(ctx, speciesId, cx, cy, size, {stage=4, angle=-0.55, silhouette, silColor, alpha, belly=0, t}) draws that spider as it looks in play,
+  // centred on (cx, cy) and fitted into a size x size box. `silhouette` fills it with one flat colour (a species that is still locked).
+  const PST = { species: 'garden', legK: 1, belly: 0, x: 0, y: 0, ang: 0, r: 5, scale: 1, stage: 4, feet: [], abAng: 0, softness: 0, flash: 0, alpha: 1, shell: false, camo: 0, carapace: 0, venom: false, deadK: 0, sx: 1, sy: 1, bobLat: 0, lunge: 0, bite: 0, eat: 0, drink: 0, resting: false, dance: false, pulse: 0, silkUp: 0, crack: 0, t: 0, camoK: 0 };
+  for (let i = 0; i < 8; i++) PST.feet.push({ x: 0, y: 0, lift: 0 });
+  let silCv = null;
+  function portraitInto(g, sp, cx, cy, size, o) {
+    const stage = o.stage != null ? o.stage : 4, ang = o.angle != null ? o.angle : -0.55, r = size / (6 * VS), R = r * VS, c = Math.cos(ang), sn = Math.sin(ang);
+    for (let i = 0; i < 8; i++) {   // feet at their relaxed positions (same layout as homeOf)
+      const k = i >> 1, s = (i & 1) ? 1 : -1, a = LEG_ANG[k], att = LEG_ATT[k], len = LEG_LEN[k] * 0.86 * (sp.leg || 1);
+      const lx = att[0] + Math.cos(a) * len, ly = s * (att[1] + Math.sin(a) * len), f = PST.feet[i];
+      f.x = cx + (lx * c - ly * sn) * R; f.y = cy + (lx * sn + ly * c) * R; f.lift = 0;
+    }
+    PST.species = sp.id; PST.legK = sp.leg || 1; PST.belly = o.belly || 0; PST.stage = stage; PST.x = cx; PST.y = cy; PST.ang = ang; PST.r = r;
+    PST.alpha = 1; PST.t = o.t != null ? o.t : Game.time.real; PST.carapace = stage >= 3 ? 1 : 0; PST.venom = !!(sp.mods && sp.mods.venom);
+    drawSpider(g, PST);
+  }
+  P.drawPortrait = function (ctx, speciesId, cx, cy, size, o) {
+    o = o || {}; if (!ctx) return;
+    const sp = Game.speciesInfo(speciesId);
+    if (o.silhouette) {
+      const px = Math.max(64, Math.ceil(size * 2));
+      try {
+        if (!silCv || silCv.width < px) silCv = U.makeCanvas(px, px);
+        const g = silCv && silCv.getContext('2d');
+        if (g) {
+          g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, px, px); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+          portraitInto(g, sp, px / 2, px / 2, px, o);
+          g.globalCompositeOperation = 'source-in'; g.fillStyle = o.silColor || '#0d0b09'; g.fillRect(0, 0, px, px); g.globalCompositeOperation = 'source-over';
+          ctx.save(); if (o.alpha != null) ctx.globalAlpha = o.alpha; ctx.drawImage(silCv, 0, 0, px, px, cx - size / 2, cy - size / 2, size, size); ctx.restore();
+          return;
+        }
+      } catch (e) { /* fall through to a plain draw */ }
+    }
+    ctx.save(); if (o.alpha != null) ctx.globalAlpha = o.alpha;
+    portraitInto(ctx, sp, cx, cy, size, o);
+    ctx.restore();
+  };
+
   function drawAll(ctx) {
     const sc = Game.state.scene; if (sc === 'boot') return;
     drawSac(ctx);
@@ -1382,6 +1502,7 @@
     drawTrail(ctx);
     drawReviveAura(ctx);
     drawSpider(ctx, playerState());
+    drawTangle(ctx);
     drawSacFront(ctx);
     drawParticles(ctx);
     drawHint(ctx);

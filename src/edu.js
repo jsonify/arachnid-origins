@@ -233,6 +233,17 @@
     'Making silk takes protein and energy, so spiders spin economically. A spider will often reuse or eat old silk, and a spider that is short of food may spin less.',
     'Run low on silk.', { event: 'edu:lowsilk' });
 
+  // ---- the Widow Matriarch and the spiders she unlocks
+  F('cobweb_tangle', 'behavior', 'Cobweb Architects',
+    'Black widows are cobweb spiders (family Theridiidae). Instead of a neat orb they weave an untidy three-dimensional tangle of strong silk, with sticky "gumfoot" threads running down to the ground. When a beetle or cricket brushes one, the glue lets go and the springy line hoists the prey off its feet, where the spider can wrap it.',
+    'Spot the Widow Matriarch.', { event: 'creature:seen', match: seen('widow', 'latrodectus') });
+  F('widow_hourglass', 'adaptation', 'The Warning Hourglass',
+    'A female black widow has a red hourglass on the underside of her abdomen. She often hangs belly-up in her web, so the mark is on display: a warning colour that tells birds and wasps she is not a good meal. Bright red on black is one of nature\'s oldest "do not eat" signals.',
+    'Make the Widow Matriarch rear up.', { event: 'boss:start' });
+  F('widow_venom', 'adaptation', 'Latrotoxin',
+    'The venom of widow spiders (Latrodectus) contains latrotoxin, a neurotoxin that makes nerve endings dump their chemical messengers all at once. It is deadly to insects, and painful, cramping and sometimes dangerous to people, although the spiders are shy, bite mainly when pressed against skin, and bites are rarely fatal today.',
+    'Defeat the Widow Matriarch.', { event: 'boss:defeated' });
+
   // ---- adaptation
   F('camouflage', 'adaptation', 'Masters of Disguise',
     'Many spiders blend in with bark, leaves or flowers. Some crab spiders can slowly shift between white and yellow to match a flower, and some spiders mimic ants or even bird droppings.',
@@ -317,6 +328,8 @@
                   science: 'Rain, wind and cold are serious dangers for small spiders. That is why they shelter under leaves, in bark crevices, or in silk retreats when the weather turns.' },
     fell:       { title: 'Fell', flavor: 'The ground rushed up too fast.',
                   science: 'Very small animals survive falls well because air resistance slows them down, but nothing is guaranteed. Spiders dangle on a dragline to catch themselves when they slip.' },
+    widow:      { title: 'Claimed by the Matriarch', flavor: 'She felt you long before you reached her, and she was ready.',
+                  science: 'A widow lives at the centre of her tangle of silk and reads every tremor that travels along the threads, so an intruder rarely surprises her. Add a fast lunge, sticky silk and a powerful neurotoxin and she is a formidable hunter for her size.' },
     default:    { title: 'Your journey ends', flavor: 'The micro world is full of dangers, and this time it won.',
                   science: 'Only a small fraction of spiderlings survive to adulthood. That is why a single egg sac can hold so many eggs: most of the babies will not make it, and nature plans for that.' },
   };
@@ -369,6 +382,7 @@
     [ // sub-adult
       { id: 'a_orb',     text: 'Build an orb web',                                  goal: 1, reward: 35, ev: 'web:spun', match: { type: 'orb' } },
       { id: 'a_flyer',   text: 'Catch a flying insect in a web',                    goal: 1, reward: 55, ev: 'web:trapped', match: (d) => !!(d && d.creature && d.creature.flying) },
+      { id: 'a_widow',   text: 'Defeat the Widow Matriarch in her lair (Old Oak Bark)', goal: 1, reward: 60, ev: 'boss:defeated', skip: () => !!(Game.unlocks && Game.unlocks.has('widow')) },
       { id: 'a_garden',  text: 'Visit the Flower Garden',                           goal: 1, reward: 40, ev: 'zone:enter', match: { zone: 'garden' }, visited: 'garden' },
       { id: 'a_rain',    text: 'Endure a rainstorm',                                goal: 20, reward: 50, track: 'rain', unit: 's' },
     ],
@@ -395,7 +409,7 @@
   // ---------------------------------------------------------------------- module
   const WIRED = ['stage:change', 'molt:start', 'molt:choose', 'molt:end', 'player:damaged', 'player:died', 'player:ate', 'player:drank',
     'player:rest', 'creature:seen', 'creature:killed', 'creature:attack', 'web:spun', 'web:trapped', 'web:destroyed', 'zone:enter',
-    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived'];
+    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived', 'boss:start', 'boss:defeated', 'species:unlocked'];
 
   const edu = {
     priority: 50,
@@ -513,7 +527,7 @@
     buildStage(st) {
       const defs = OBJECTIVES[Math.min(st, OBJECTIVES.length - 1)] || [];
       edu.objectives = [];
-      edu._queue = defs.map(d => Object.assign({}, d));
+      edu._queue = defs.filter(d => !(d.skip && d.skip())).map(d => Object.assign({}, d));   // `skip`: objectives that no longer apply (a spider already unlocked)
       edu._exploreCells = 0;
       edu.refill();
     },
@@ -648,7 +662,7 @@
       // player
       if (e === p || (e.stage !== undefined && e.hunger !== undefined)) {
         const st = C.STAGES[e.stage] || C.STAGES[0];
-        lines.push('You: ' + st.name + ' spider');
+        lines.push('You: ' + st.name + ' ' + (e.species && e.species.id !== C.SPECIES[0].id ? e.species.name : 'spider'));
         lines.push('Body length: about ' + mm(e.radius || st.radius) + ' (to scale)');
         lines.push('Speed x' + (e.speedMul != null ? e.speedMul.toFixed(2) : '1.00') + ' - bite x' + (e.biteMul != null ? e.biteMul.toFixed(2) : '1.00'));
         lines.push('Stealth ' + Math.round((e.stealth != null ? e.stealth : 1) * 100) + '% detectable - senses within ' + Math.round(e.senseRadius || 0) + ' px');

@@ -15,7 +15,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const { createCanvas } = require(path.join(__dirname, '..', 'node_modules', '@napi-rs', 'canvas'));
 const SRC = path.join(__dirname, '..', 'src');
-const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'edu', 'audio', 'ui'];
+const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'boss', 'edu', 'audio', 'ui'];
 const SHOTS = path.join(__dirname, 'shots');
 let ctxG = null, canvas = null, Game = null;
 
