@@ -119,9 +119,13 @@
     egg(V) { const t = V.t; [261.6, 392, 523.25].forEach((f, i) => bell(V.out, f, t + i * 0.24, 0.2, 1.8)); nz(V.out, t + 0.4, 0.9, 0.025, 'highpass', 6500, 0, 0.7, 0.2); },
     revive(V) { const t = V.t; [392, 523.25, 659.25, 783.99].forEach((f, i) => bell(V.out, f, t + i * 0.12, 0.2, 1.5)); [196, 261.6, 329.6].forEach(f => pad(V.out, f, t, 2.4, 0.07, 0.5)); nz(V.out, t + 0.1, 0.9, 0.03, 'highpass', 6500, 0, 0.7, 0.25); },
     victory(V) { const t = V.t; [523.25, 659.25, 783.99, 1046.5, 1318.5, 1568].forEach((f, i) => bell(V.out, f, t + i * 0.15, 0.17, 1.6)); [262, 330, 392, 523].forEach(f => pad(V.out, f, t + 0.1, 3.4, 0.07, 1.0)); },
+    // the Widow Matriarch: a low rattling hiss that swells, a wet silk spit, and a ground-shaking slam
+    boss_roar(V) { const t = V.t; nz(V.out, t, 1.1, 0.2, 'bandpass', 900, 260, 1.4, 0.18); osc(V.out, 'sawtooth', 92, 58, t, 1.0, 0.12, 0.12, 700, [19, 9]); osc(V.out, 'sawtooth', 138, 80, t, 0.9, 0.06, 0.14, 600, [23, 7]); nz(V.out, t, 0.9, 0.05, 'highpass', 5200, 0, 0.7, 0.2); },
+    web_spit(V) { const t = V.t; nz(V.out, t, 0.2, 0.2, 'bandpass', 1500, 4200, 2.2, 0.01); osc(V.out, 'sine', 780, 260, t, 0.16, 0.12, 0.004); nz(V.out, t + 0.08, 0.16, 0.06, 'highpass', 5000, 0, 0.7, 0.04); },
+    slam(V) { const t = V.t; osc(V.out, 'sine', 120, 38, t, 0.5, 0.42, 0.004); nz(V.out, t, 0.5, 0.3, 'lowpass', 900, 90, 0.8, 0.003, brownBuf); nz(V.out, t, 0.09, 0.2, 'highpass', 2200, 0, 0.7, 0.001); },
   };
-  const WET = { death: 0.55, revive: 0.5, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
-  const PRIORITY = { death: 1, revive: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
+  const WET = { boss_roar: 0.4, slam: 0.35, web_spit: 0.15, death: 0.55, revive: 0.5, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
+  const PRIORITY = { boss_roar: 1, slam: 1, death: 1, revive: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
   const MINGAP = { step: 0.07, sprint: 0.12, struggle: 0.12, ui_hover: 0.05, bite: 0.06, wasp_buzz: 0.5, ant_hiss: 0.3, splash: 0.12, drink: 0.2, eat: 0.2, spin: 0.15 };
   const NO_SPACE = { ui_click: 1, ui_hover: 1, ui_back: 1, unlock: 1, levelup: 1, molt_start: 1, molt_end: 1, death: 1, revive: 1, victory: 1, egg: 1, courtship: 1, danger: 1, rest: 1, thunder: 1 };
 

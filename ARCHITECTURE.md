@@ -2,7 +2,7 @@
 
 Browser game, plain JavaScript (no build step, no external libs), HTML5 Canvas 2D. All art is **procedural** (drawn with canvas code) and all audio is **procedural** (Web Audio). Read `GDD.md` for the design. Read `src/core.js` for the engine (do not edit it; if you need a change, describe it in your final report).
 
-Files load in this order (`index.html`): `core.js`, `world.js`, `webs.js`, `player.js`, `creatures.js`, `edu.js`, `audio.js`, `ui.js`, `main.js`.
+Files load in this order (`index.html`): `core.js`, `world.js`, `webs.js`, `player.js`, `creatures.js`, `boss.js`, `edu.js`, `audio.js`, `ui.js`, `main.js`.
 Each module is one file that ends by calling `Game.register(name, moduleObject)`. After registering, the object is available as `Game.<name>` (e.g. `Game.player.x`). **The module object itself is the public state + API.**
 
 | file | module name | priority | owner agent |
@@ -12,6 +12,7 @@ Each module is one file that ends by calling `Game.register(name, moduleObject)`
 | webs.js | `webs` | 20 | B: Silk & webs |
 | player.js | `player` | 30 | C: Spider, growth, molting, survival |
 | creatures.js | `creatures` | 40 | D: Ecosystem AI |
+| boss.js | `boss` | 45 | F: The Widow Matriarch boss fight (unlocks the Black Widow) |
 | edu.js | `edu` | 50 | E: Education, objectives, bestiary data |
 | ui.js | `ui` | 100 | E: HUD, menus, title, screens |
 
@@ -28,7 +29,16 @@ Never call `ctx.save/restore` imbalance: core wraps each drawer in save/restore 
 6. Coordinates: world is `Game.C.WORLD_W x WORLD_H` = 6400 x 3600, top-down view. Angles are radians (0 = +x/right, +y is down). Player starts at `Game.C.SPAWN`.
 
 ## Shared constants — `Game.C` (see core.js)
-`STAGES[0..4]`, `WEB_TYPES`, `UPGRADES`, `ZONES`, `SFX`, `KEYMAP`, `DAY_LENGTH`. Zones are vertical bands: litter x 0–2400, bark 2400–4200, garden 4200–6400. Stage 0 hatchling … 4 adult.
+`STAGES[0..4]`, `WEB_TYPES`, `UPGRADES`, `ZONES`, `SFX`, `KEYMAP`, `DAY_LENGTH`, `MODES`, `SPECIES`. Zones are vertical bands: litter x 0–2400, bark 2400–4200, garden 4200–6400. Stage 0 hatchling … 4 adult.
+
+## Playable spiders — `Game.C.SPECIES`, `Game.unlocks`
+`Game.C.SPECIES` is data: the starter (`garden`, Garden Spider) first, then spiders unlocked by beating a boss (`widow`, Black Widow, unlocked by the Widow Matriarch). Each entry: `{id, name, latin, tag, blurb, perks[], mods, leg, unlock?, boss?}`. `mods` multiplies stats in `player.applyUpgrades` (`speed`, `bite`, `silk`, `hp`), `venom` is the share of a bite's damage that keeps poisoning prey, `nightStealth` multiplies how easily hunters notice you after dusk; `leg` stretches the legs. To add a spider: add an entry, a palette (and markings) in player.js (`PAL_*` / `PALS`, `ABD_SHAPE`), and a way to call `Game.unlocks.unlock(id)`.
+```
+Game.unlocks.has(id) / .list() / .unlock(id) -> bool (true if new; emits species:unlocked) / .reload()   // saved in the store ('unlocks'); the starter is never locked
+Game.speciesInfo(id) -> entry (unknown id = the starter)      Game.pickSpecies(id?) -> the id a new game would use (locked/unknown -> saved choice -> starter)
+Game.newGame(mode?, species?)  // species: an unlocked id; omitted/locked/unknown = Game.settings.species, else the starter. Sets Game.state.species
+Game.settings.species          // the spider chosen last (saved); the title's New Game opens a "Choose your spider" step after the mode card once 2+ are unlocked
+```
 
 ## Input — `Game.input`
 `down(action)`, `pressed(action)`, `released(action)`, `axis()` -> `{x,y}`, `mouse` (`x,y` screen; `wx,wy` world; `down,pressed,released`), `anyPressed()`.
@@ -50,8 +60,14 @@ Test injection: `Game.input.inject.keyDown('KeyW')`, `.keyUp`, `.click(x,y)`.
 | `molt:end` | `{stage}` | player |
 | `growth:gain` | `{amount, total, needed}` | player |
 | `player:damaged` | `{amount, source}` | player |
-| `player:died` | `{cause}` (cause: `starved|dehydrated|eaten|exhausted|drowned|exposure|fell`) | player |
+| `player:died` | `{cause}` (cause: `starved|dehydrated|eaten|exhausted|drowned|exposure|fell|widow`; `widow` = killed by the Widow Matriarch, its own game over note) | player |
 | `player:downed` | `{cause, left}` a fatal blow landed but a sibling is giving its life instead of the spider dying (`left` = siblings still available after this one) | player |
+| `species:unlocked` | `{id}` a playable spider was unlocked for good (saved); ui shows the unlock card | core (`Game.unlocks.unlock`) |
+| `boss:notice` | `{small:true}` the player is near the Matriarch's lair but too small to fight her (once per approach) | boss |
+| `boss:start` | `{phase:1}` she woke: intro, then the fight | boss |
+| `boss:phase` | `{phase}` she entered phase 2 or 3 | boss |
+| `boss:retreat` | – the player fled her arena; she went home to heal | boss |
+| `boss:defeated` | `{species}` the player beat her (the species it unlocked) | boss |
 | `player:revived` | `{cause, left, total}` the sibling's gift landed and the spider is back up (`total` = revives this run) | player |
 | `kin:sacrifice` | `{creature, x, y, left}` a sibling has given its life (player.js listens) | creatures |
 | `player:ate` | `{kind, value, x, y}` | player |
@@ -149,10 +165,15 @@ player.heal(n), player.feed(hunger, growth, kind), player.drink(n)
 player.bite() ; biting: hold J/left click; hits nearest edible creature in reach via Game.creatures.attackAt(x,y,r,dmg,by) (see creatures)
 player.stateLabel  // 'walking'|'sprinting'|'resting'|'spinning'|'molting'|'courting'
 player.mate = { found:false, courted:false, laid:false }   // ending progress (adult only)
+player.species          // the Game.C.SPECIES entry this spider is (stats, palette, perks follow from it)
+player.stealthBase, player.venomPower   // stealth before the species' night bonus; share of a bite's damage that poisons prey (0 for the garden spider)
+player.slow(t, mul)     // stuck in sticky silk: move at mul x normal speed for t s (the stronger slow wins, the timer only extends); player.tangleT / tangleMul hold the state
+player.drawPortrait(ctx, speciesId, cx, cy, size, {stage=4, angle, silhouette, silColor, belly, alpha, t})   // that spider as it looks in play, fitted in a size x size box (silhouette = a locked one)
 ```
 Rules: move with WASD (sprint drains energy), obstacles via `Game.world.resolve`. Meters: hunger/hydration drain per STAGES rates × `drainMul`; energy drains while sprinting, regens while resting (R, in shelter/retreat is 3x). Siblings huddled around a resting player (`creatures.huddle`, max 3) add +15% energy regen, +20% healing and -12% hunger/thirst drain each. Starving/dehydrated -> hp loss; hp regens when meters are healthy and resting. Rain damages small exposed spiders (`world.exposure`), being on the ground at night is riskier only through predators. Interact (E): drink near dew (`Game.world.nearestResource(x,y,'dew',radius+18)`) / nectar, enter/exit shelters, mate interactions. Eating: bite creature -> `Game.creatures.attackAt`; when a creature dies by player bite, creatures.js calls `Game.player.feed(hunger, growth, kind)` (value from KINDS). Growth from eating + `edu` objectives (`addGrowth`). Molt: at `growth >= growthNeeded` (and stage<4): `Game.setScene('molting')`, emit `molt:start`, ui shows the choice screen and calls `Game.player.chooseUpgrade(id)` -> then player plays a molt animation (~6 s, `moltTimer`, vulnerable), `stage+1`, `stage:change`, `molt:end`, `Game.camera.targetZoom = STAGES[stage].zoom`, silk/hp refill partially. Web spin availability is by `Game.C.STAGES[stage].webs`.
 Ending (stage 4): `Game.creatures.spawnMate()` is called by player.js on reaching adult; find the mate (glowing pheromone trail hint via `player.mateHint` vector shown by ui), press E near the mate with hunger>35 -> courtship mini-sequence (short dance, `courtship:done`), then go to an egg site (`world.shelters` with `eggSite`), press E to lay the egg sac -> `player.mate.laid=true`, emit `game:victory` and `Game.setScene('victory')`.
 Death: `Game.setScene('gameover')` after a brief death animation; ui offers retry.
+Species (`Game.C.SPECIES`): `Game.state.species` picks the spider in `reset()`. The Black Widow is glossy black when grown (pale and striped as a hatchling, with orange-red spots that fade as she molts), has a round abdomen and longer legs, bites 35% harder, has 25% more silk, hides 20% better at night, and her bite poisons prey (`venomPower`); she is 6% slower with 10% less health. Her red hourglass is on her underside, so it only shows while she hangs belly-up to spin or rest (`bellyK`).
 Game modes (`Game.C.MODES`, chosen on the title screen: New Game opens a "Choose your journey" picker; the last choice is saved in `Game.settings.mode` and highlighted next time; `Game.newGame(mode)` sets `Game.state.mode`, omitted = the saved one): **Brood** (default) has the sibling revive below; **Survival** is one life, and siblings still warn and huddle but never revive you. Survival hides the HUD Siblings row.
 Sibling revive (Brood mode only): a fatal blow (`die()`) first asks `Game.creatures.claimSibling(x, y)` for a sibling. If one answers, the spider is *downed* instead (`player.reviving`, `player:downed`; no `player:died`). The sibling runs in, settles on the spider and gives its life (`kin:sacrifice`); the spider then gets up with 50% health, hunger/hydration/energy lifted to at least 35 (so a death by starvation doesn't repeat) and 4 s of invulnerability (`player:revived`), and hunters next to it are startled off. 1 sibling = 1 revive; with none left the next fatal blow is a real death. Tuning: `REVIVE_*` at the top of player.js, `SAC_*` in creatures.js. Siblings are a finite pool (5 at hatching, `updateKinCount` lets them drift away as you grow: 4/3/1/0), so revives run out on their own.
 Camera: set `Game.camera.targetZoom` per stage; camera target = player.
@@ -179,10 +200,26 @@ creatures.alarms -> [{id, kind, x, y, life}]        // sibling lookouts: a hunte
 creatures.siblings -> int                         // siblings still with the player (alive, not drifting away, not already giving their life) = revives left; creatures.siblingsMax = how many hatch with you (5)
 creatures.claimSibling(x, y) -> creature|null     // player.js: the nearest such sibling is claimed to give its life (null = none left). A claimed sibling is hidden from hunters and can't be hurt, so the revive always completes
 creatures.startle(x, y, r) -> n                   // hunters within r flee for a few seconds and won't re-engage straight away (used when a sibling's gift lands)
+creatures.KINDS.widow                             // the Widow Matriarch (`boss: true`, `ai: 'boss'`): a creature like any other, but boss.js is her brain (creatures calls `Game.boss.think(c, dt)`, routes damage through `Game.boss.onHurt(c, dmg, by)` and asks `Game.boss.threat(c)` for the danger meter); `creatures.pickSpawnPos` keeps wanderers out of `Game.boss.inArena`
 creatures.huddle -> 0..3                            // siblings tucked in around the resting player. player.js (HUDDLE_* constants) turns that into faster energy/health recovery and slower hunger/thirst drain; `player.huddled` mirrors it
 ```
 AI: prey wander/graze/flee (flee from player if `dist < detection * player.stealth` and player not hidden), predators patrol/hunt the player when within `detection * player.stealth` (hidden players are found only when within ~radius*2 or via `player.senseRadius` for the player only), attack deals damage via `Game.player.damage()` and sets `Game.state.danger`. Predators dislike webs (they may break them) but small predators get stuck. Birds: telegraphed shadow that drifts over exposed ground (`world.exposure>0.6`) then strikes; being covered saves you. Population: maintain target counts per zone/time-of-day by despawning far-offscreen creatures and respawning at world.spawnPoints out of view. Balanced difficulty: hatchling zone has springtails/mites/midges plentiful and only slow, distant threats; danger ramps by stage and zone (bark = ants/centipedes, garden = wasps/mantis/birds). Creatures use `Game.world.resolve` for obstacle avoidance.
 Drawing: rich procedural sprites per kind (legs, antennae, wings that flutter, carapace shine, colored patterns) at CREATURES_LOW/HIGH (flyers high), with health/state cues (stuck creatures wiggle; alerted creatures show a small "!" mark). Draw small unobtrusive detection rings only when `Game.settings.science` is on.
+
+Poison (Black Widow only): `strike()` sets `c.venomT` (4 s) and `c.venomDps` on prey the player bites while `player.venomPower > 0`; `updateCreature` ticks it (damage over time, slowed) and a poisoned kill still counts as the player's, so it feeds them. Up to 3 bites stack.
+
+### F. `Game.boss` (boss.js) — priority 45
+The Widow Matriarch: a boss fight in her lair in the Old Oak Bark. Beating her unlocks the Black Widow.
+```
+boss.state         'dormant' | 'intro' | 'fight' | 'defeated' | 'gone' (already beaten in an earlier journey: only her empty lair remains)
+boss.lair {x,y,r}  picked at reset from the generated world: open bark, away from the hatch point and shelters, no canopy over it (deterministic)
+boss.c, boss.phase (1..3), boss.hpFrac(), boss.active() (intro or fight), boss.tooSmall, boss.discovered
+boss.inArena(x,y,pad), boss.threat(c), boss.start() (wake her at once), boss.TUNING {LUNGE,SPIT,SLAM}, boss.MIN_STAGE/WAKE_R/NOTICE_R/ARENA_R
+```
+Flow: she sleeps on her lair (visible tangle of silk, egg sacs, prey husks; a pale tripwire ring at `WAKE_R` is drawn for a spider big enough to answer it). A sub-adult (stage 3) or bigger crossing the ring wakes her (`boss:start`): a 2.6 s intro (she rears, the red hourglass shows, nothing can hurt her), then the fight. A smaller spider is warned off once (`boss:notice`) and ignored; it cannot hurt her. An adult faces a Matriarch with 40% more health (340 -> 476).
+Attacks (each shows first; her opening is the player's chance): **lunge** (0.6 s windup with the lane drawn on the ground, then a locked 0.22 s dash for 16; sidestep the lane; she is winded for ~1 s), **silk spit** (fan of 3 globs, 5 in phase 3: 5 damage + slow, or a sticky patch where they land; used when you keep your distance), **slam** (phase 2+: 0.95 s windup with the ring drawn, 24 to everyone inside it, then stunned for 1.7 s). Phases at 60% and 30% health: faster, shorter cooldowns, a roar between. Bites do +35% while she is winded or stunned; her armour takes 12% off.
+Arena: she keeps within `ARENA_R` of the lair; flee beyond it (and away from her) for 4 s and she gives up, goes home and heals ~12%/s (`boss:retreat`); the wake ring works again. Nothing else spawns in the arena. Killing her by the player (bite, venom) fires `boss:defeated`, heals the player 40%, completes the optional sub-adult objective (+60 growth) and calls `Game.unlocks.unlock('widow')` at once (saved, so dying a moment later keeps it). Anything else removing her only makes her `gone`: no unlock.
+Balance reference (tools/test_boss.js, scripted players): a sub-adult who sidesteps her telegraphs and bites when she is winded wins in ~55 s taking 15-35 of 120 health; one who just stands and bites loses. Tune in `boss.js` (`LUNGE`, `SPIT`, `SLAM`, `PHASE_AT`, `ADULT_HP`) and `KINDS.widow` (hp 340, armor 0.12).
 
 ### E. `Game.edu` (edu.js) — priority 50
 Owns objectives and educational content data (UI displays them).
@@ -196,11 +233,11 @@ edu.tip() -> string   // contextual hint (used by ui HUD for the first minutes; 
 edu.scienceInfo(entity) -> string[]  // detailed lines for Science Mode (creature, web, player, resource)
 edu.foodWeb() -> {nodes, edges}  // for a food-web diagram derived from Game.creatures.KINDS.diet
 ```
-Objectives are generated per stage (e.g. hatchling: "Drink from dew", "Eat 3 springtails", "Reach a shelter", "Survive your first night"; spiderling: "Spin a dragline", "Catch prey in a web"; juvenile: "Build a sheet web / retreat", "Escape a predator", "Explore the bark zone"; sub-adult: "Build an orb web", "Catch a flying insect", "Survive a rainstorm", "Visit the flower garden"; adult: "Find a mate", "Lay your egg sac"). Progress driven by events (`player:ate`, `web:spun`, `web:trapped`, `zone:enter`, `weather:change`, `day:phase`...). Completing an objective calls `Game.player.addGrowth(reward)` and emits `objective:complete`.
+Objectives are generated per stage (e.g. hatchling: "Drink from dew", "Eat 3 springtails", "Reach a shelter", "Survive your first night"; spiderling: "Spin a dragline", "Catch prey in a web"; juvenile: "Build a sheet web / retreat", "Escape a predator", "Explore the bark zone"; sub-adult: "Build an orb web", "Catch a flying insect", "Survive a rainstorm", "Visit the flower garden"; adult: "Find a mate", "Lay your egg sac"). Progress driven by events (`player:ate`, `web:spun`, `web:trapped`, `zone:enter`, `weather:change`, `day:phase`...). Completing an objective calls `Game.player.addGrowth(reward)` and emits `objective:complete`. An objective def may have `skip: () => bool` (left out when it no longer applies): the sub-adult list has the optional "Defeat the Widow Matriarch" (`ev: 'boss:defeated'`) until the Black Widow is unlocked.
 Facts unlock on events (first bite, first molt, first web, seeing a kind via `creature:seen`, zones, weather, night...). Every unlock emits `fact:unlock` and a `sfx` `unlock`.
 
 ### E2. `Game.ui` (ui.js) — priority 100, `alwaysUpdate: true`
-Owns all screens. Scenes: `title` (animated: slow camera drift over the world, glowing title "Arachnid Origins — The Spider's Journey", buttons New Game / Continue-hint / Settings / How to Play / Bestiary / Credits), `playing` HUD, `paused` (Resume, Settings [master/music/sfx sliders, mute, screen shake, science mode, hints], Bestiary, Quit to Title), `molting` (skill-tree/upgrade choice: 3 cards from `Game.player.offerUpgrades()` + current upgrade tree overview; keyboard 1-3/arrows+enter and mouse; shows stage lore from `edu.STAGE_LORE`), `codex` (tabs: Bestiary [grid of `Game.creatures.KINDS`, silhouettes for unseen kinds, details for seen], Encyclopedia [facts by category, unlocked/locked counts], Anatomy [spider diagram], Food Web), `gameover` (cause-of-death flavor text + science note, stats, Retry/Title), `victory` (life-cycle recap, stats, egg sac scene, Play Again/Title).
+Owns all screens. Scenes: `title` (animated: slow camera drift over the world, glowing title "Arachnid Origins — The Spider's Journey", buttons New Game / Continue-hint / Settings / How to Play / Bestiary / Credits), `playing` HUD, `paused` (Resume, Settings [master/music/sfx sliders, mute, screen shake, science mode, hints], Bestiary, Quit to Title), `molting` (skill-tree/upgrade choice: 3 cards from `Game.player.offerUpgrades()` + current upgrade tree overview; keyboard 1-3/arrows+enter and mouse; shows stage lore from `edu.STAGE_LORE`), `codex` (tabs: Bestiary [grid of `Game.creatures.KINDS`, silhouettes for unseen kinds, details for seen], Encyclopedia [facts by category, unlocked/locked counts], Anatomy [spider diagram], Food Web), `gameover` (cause-of-death flavor text + science note, stats, Retry/Title), `victory` (life-cycle recap, stats, egg sac scene, Play Again/Title). The codex has a fifth tab, **Spiders**: the roster of playable spiders (locked ones are silhouettes with how to unlock them), perks and life stages. Title: New Game -> mode cards -> (with 2+ spiders unlocked) "Choose your spider" cards. In play: the Matriarch's health bar (top centre) with an "Exposed - bite her!" cue, boss banners that jump the banner queue, a lair marker on the minimap once you are a sub-adult, the species name in the HUD/pause/end screens when it is not the starter, and an "unlocked" card after she falls (end screens mention a spider unlocked that run, and tease the locked one after a win).
 HUD: minimal — health/hunger/hydration/energy bars (with icons drawn in code), silk meter, growth bar with stage name, hotbar for webs (locked/unlocked, cost, key), objectives (top-right, max 3), minimap (bottom-right, fog of war via `Game.world.explored`, markers: player, mate hint, shelters when explored, `M` toggles size), day/night clock + weather icon, zone-name banner on `zone:enter`, fact-unlock toast (bottom-left) on `fact:unlock`, damage vignette on `player:damaged`, low-meter pulse warnings, contextual prompts near interactables ("E — Drink"), hint text from `edu.tip()` for the first few minutes when `Game.settings.hints`. Science Mode (F): overlays with `edu.scienceInfo()` on creatures/webs near cursor plus numeric meters. Pause when `Game.pause()`; ui handles the `pause` action (Esc/P) and `codex` action (B). Use crisp, elegant styling (dark translucent panels, warm amber accent, subtle animation).
 
 ### main.js (lead-owned)
@@ -218,4 +255,5 @@ window.addEventListener('load', () => { Game.boot(document.getElementById('game'
 * Sound: emit `Game.emit('sfx', {name:'bite', x, y})`; never touch Web Audio outside audio.js.
 
 ## Testing
+Tests: `tools/test_species.js` (species data, unlocks, the Black Widow's stats/art/poison, the New Game flow, the Spiders tab), `tools/test_boss.js` (the lair, waking, every attack and phase, the leash, defeat and unlock, plus scripted fairness fights; `--quick` skips those).
 `node tools/harness.js` loads all `src/*.js` in a Node `vm` context with a real headless canvas (`@napi-rs/canvas`), boots the game, runs N simulated seconds with scripted input, asserts `Game.errors.length === 0`, and can write PNG screenshots (`tools/shots/*.png`). Useful helpers exposed by the harness: see the header of `tools/harness.js`. Use it constantly; view PNGs with the Read tool to check your art. Run `node --check src/yourfile.js` for syntax.

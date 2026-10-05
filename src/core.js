@@ -21,6 +21,19 @@
       { id: 'brood',    name: 'Brood',    tag: 'Default', blurb: 'Your siblings have your back. If you would die, a sibling gives its life to bring you back: one sibling, one revive. They also warn you of predators and huddle in while you rest.', note: 'Up to 5 revives, fewer as siblings drift away.' },
       { id: 'survival', name: 'Survival', tag: 'Hard',    blurb: 'One life, no second chances. Your siblings still warn you of predators and huddle in while you rest, but they cannot save you. When you die, the journey is over.', note: 'No revives.' },
     ],
+    // Playable spiders. The first one is the starter and is always available; the others are locked until Game.unlocks.unlock(id)
+    // (the Widow Matriarch boss unlocks the Black Widow). A species is data: `mods` multiply the stage stats (see player.applyUpgrades),
+    // `venom` makes bites poison prey, `nightStealth` multiplies how easily hunters notice you after dusk, `leg` stretches the legs.
+    SPECIES: [
+      { id: 'garden', name: 'Garden Spider', latin: 'Araneus diadematus', tag: 'Starter',
+        blurb: 'A balanced orb-weaver, the spider you start as. Nothing special, nothing missing: a good all-rounder that learns every web.',
+        perks: ['Balanced: no strengths, no weaknesses', 'Weaves every web type'], mods: {}, leg: 1 },
+      { id: 'widow', name: 'Black Widow', latin: 'Latrodectus mactans', tag: 'Boss reward',
+        blurb: 'A shy night hunter with a famous neurotoxin. Her bite poisons prey, her silk is strong and plentiful, and she hides well in the dark, but she is a little frail and slower on her feet.',
+        perks: ['Neurotoxic bite: poison keeps working after the bite', '+35% bite damage, +25% silk', 'Hunters notice you 20% less at night', '-6% speed, -10% health'],
+        mods: { bite: 1.35, silk: 1.25, speed: 0.94, hp: 0.9, venom: 0.5, nightStealth: 0.8 }, leg: 1.08,
+        unlock: 'Defeat the Widow Matriarch in her lair deep in the Old Oak Bark. Grow to a sub-adult first.', boss: 'widow' },
+    ],
     SPAWN: { x: 320, y: 1800 }, // hatch point (inside Leaf Litter)
     ZONES: [
       { id: 'litter', name: 'Leaf Litter',  x0: 0,    x1: 2400, y0: 0, y1: 3600, color: '#5a4327' },
@@ -55,7 +68,8 @@
     // Every sfx name that may be emitted via Game.emit('sfx', {name, x, y, vol}).
     SFX: ['step', 'sprint', 'bite', 'eat', 'drink', 'spin', 'web_place', 'web_snap', 'trap', 'struggle',
           'hurt', 'death', 'molt_start', 'molt_end', 'levelup', 'ui_click', 'ui_hover', 'ui_back', 'unlock',
-          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory', 'revive'],
+          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory', 'revive',
+          'boss_roar', 'web_spit', 'slam'],
     KEYMAP: {
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
@@ -134,10 +148,33 @@
     get(k, d) { try { const v = root.localStorage && root.localStorage.getItem('ao_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return k in memStore ? memStore[k] : d; } },
     set(k, v) { try { root.localStorage.setItem('ao_' + k, JSON.stringify(v)); } catch (e) { memStore[k] = v; } },
   };
-  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true, mode: 'brood' }, Game.store.get('settings', {}));
+  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true, mode: 'brood', species: 'garden' }, Game.store.get('settings', {}));
   if (!C.MODES.some(m => m.id === Game.settings.mode)) Game.settings.mode = C.MODES[0].id;   // unknown / stale saved value
   Game.modeInfo = (id) => C.MODES.find(m => m.id === id) || C.MODES[0];
   Game.saveSettings = () => Game.store.set('settings', Game.settings);
+
+  // Spiders you can play as. The starter (C.SPECIES[0]) is always available; the rest are unlocked by beating their boss and stay
+  // unlocked between journeys (saved in the store, like Codex discoveries).
+  //   Game.unlocks.has(id)      is this species available?        Game.unlocks.list()  ids of every available species
+  //   Game.unlocks.unlock(id)   unlock it -> true if it was new (emits `species:unlocked` {id}); unknown ids are ignored
+  const speciesIds = () => C.SPECIES.map(s => s.id);
+  const savedUnlocks = () => { const v = Game.store.get('unlocks', []); return Array.isArray(v) ? v.filter(id => speciesIds().indexOf(id) > 0) : []; };   // index 0 is the starter: never "locked"
+  let unlockedSet = new Set(savedUnlocks());
+  Game.speciesInfo = (id) => C.SPECIES.find(s => s.id === id) || C.SPECIES[0];
+  Game.unlocks = {
+    has: (id) => id === C.SPECIES[0].id || unlockedSet.has(id),
+    list: () => C.SPECIES.filter(s => Game.unlocks.has(s.id)).map(s => s.id),
+    unlock(id) {
+      if (speciesIds().indexOf(id) < 0 || Game.unlocks.has(id)) return false;
+      unlockedSet.add(id); Game.store.set('unlocks', Array.from(unlockedSet));
+      Game.emit('species:unlocked', { id });
+      return true;
+    },
+    reload() { unlockedSet = new Set(savedUnlocks()); },   // re-read the saved list (tests)
+  };
+  // the species a new game uses: the one asked for, else the one picked last, as long as it is unlocked; otherwise the starter
+  Game.pickSpecies = (id) => { const s = Game.speciesInfo(id || Game.settings.species); return Game.unlocks.has(s.id) ? s.id : C.SPECIES[0].id; };
+  if (!Game.unlocks.has(Game.settings.species)) Game.settings.species = C.SPECIES[0].id;   // stale saved choice
 
   // --------------------------------------------------------------- shared state
   // Modules own their own state (Game.player.x ...). Game.state only holds cross-cutting flags.
@@ -148,6 +185,7 @@
     stats: {},        // free-form counters (eaten, webs, moltCount, daysSurvived...) written by anyone via Game.stat()
     victory: false,
     mode: 'brood',    // brood|survival: set by Game.newGame(mode)
+    species: 'garden', // which spider you are (a Game.C.SPECIES id): set by Game.newGame(mode, species)
   };
   Game.stat = (k, add) => { const s = Game.state.stats; s[k] = (s[k] || 0) + (add === undefined ? 1 : add); return s[k]; };
 
@@ -244,8 +282,10 @@
 
   // ------------------------------------------------------------- game control
   // mode: a Game.C.MODES id; omitted = the one last chosen (Game.settings.mode, saved by the title screen)
-  Game.newGame = (mode) => {
+  // species: a Game.C.SPECIES id that is unlocked; omitted, unknown or still locked = the one last chosen (Game.settings.species), else the starter
+  Game.newGame = (mode, species) => {
     Game.state.mode = Game.modeInfo(mode || Game.settings.mode).id;
+    Game.state.species = Game.pickSpecies(species);
     Game.state.victory = false; Game.state.danger = 0; Game.state.stats = {};
     Game.time.t = 0;
     modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });

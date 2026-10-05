@@ -54,6 +54,11 @@ Players guide their spider through multiple growth stages, each presenting new c
 - Interact with other spiders (competition, cooperation)
 - Adapt to changing environmental conditions
 
+#### 2.2.5b Unlockable Spiders
+- You start as a Garden Spider; other species are unlocked for good by beating a boss and can be chosen when starting a new journey
+- First unlock: the **Black Widow**, won by defeating the **Widow Matriarch** in her lair in the Old Oak Bark (sub-adult or bigger). The widow has a neurotoxic bite (poison keeps working), strong silk and better stealth at night, but is slower and frailer
+- Each species is a trade-off, not a strict upgrade; new species and bosses plug into the same system (see ARCHITECTURE.md)
+
 #### 2.2.6 Adaptive Gameplay
 - Player choices influence spider's development
 - Multiple playstyles: aggressive hunter, stealthy trapper, efficient web-builder

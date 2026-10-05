@@ -370,14 +370,18 @@
   // --------------------------------------------------------------- the module
   const ui = {
     priority: 100, alwaysUpdate: true,
-    sub: null,                 // title/pause sub-panels: settings | howto | credits | confirmQuit
+    sub: null,                 // title/pause sub-panels: settings | mode | species | howto | credits | confirmQuit
     idx: {},                   // focus index per menu key
+    pendingMode: 'brood',      // the mode picked on the first New Game step, while the spider is being chosen
+    unlockCard: null,          // {id, t0, dur, played}: the "new spider unlocked" card
+    newSpecies: [],            // species unlocked during this run (the end screens mention them)
+    bossLag: 1,                // the Matriarch's health bar, trailing behind the real value
     enterT: 0,                 // real-time the current scene was entered
     mapBig: false,
     toasts: [], banners: [], flash: 0, hint: { text: '', t0: 0, shownAt: 0, last: '' },
     stageCard: null, prompt: null, picked: null,
     molt: { offers: [], t0: 0, chosen: -1 },
-    codex: { tab: 0, bsel: 0, bscroll: 0, cat: 0, escroll: 0, part: 0, fsel: 0 },
+    codex: { tab: 0, bsel: 0, bscroll: 0, cat: 0, escroll: 0, part: 0, fsel: 0, ssel: 0 },
     death: { cause: null },
     drift: { x: 3000, y: 1800 },
     dragging: null,
@@ -447,6 +451,8 @@
   // ------------------------------------------------------------- toasts etc.
   function pushToast(t) { t.t0 = real(); t.dur = t.dur || 5.5; ui.toasts.push(t); if (ui.toasts.length > 3) ui.toasts.shift(); }
   function pushBanner(b) { b.t0 = null; b.dur = b.dur || 4; ui.banners.push(b); if (ui.banners.length > 3) ui.banners.shift(); }
+  // the Matriarch's banners matter now: they replace any earlier boss banner and go to the front of the queue (a zone name can wait)
+  function pushBossBanner(b) { ui.banners = ui.banners.filter(x => x.kind !== 'boss'); b.kind = 'boss'; b.t0 = null; b.dur = b.dur || 4; ui.banners.unshift(b); if (ui.banners.length > 3) ui.banners.pop(); }
   const ZONE_SUB = { litter: 'Where the forest floor recycles itself', bark: 'A vertical world of ridges and crevices', garden: 'Nectar, petals and wings' };
   const PHASE_BANNER = { night: ['Night falls', 'Some creatures sleep, others wake'], dawn: ['Dawn', 'Dew beads on every thread'], dusk: ['Dusk', 'Light fades; the hunt changes'] };
 
@@ -494,6 +500,12 @@
     const b = { x: (W - 840) / 2, y: 110, w: 840, h: 500 }, n = C.MODES.length, cw = 372, ch = 300, gap = 36, x0 = b.x + (b.w - (n * cw + (n - 1) * gap)) / 2;
     return { b, cards: C.MODES.map((m, i) => ({ x: x0 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
   }
+  // "Choose your spider": one card per species (locked ones show how to unlock them). Wider than the mode panel once there are 3+ spiders.
+  function speciesLayout() {
+    const n = C.SPECIES.length, cw = n <= 2 ? 372 : 300, ch = 348, gap = 36, tw = n * cw + (n - 1) * gap, bw = Math.max(840, tw + 80);
+    const b = { x: (W - bw) / 2, y: 90, w: bw, h: 540 }, x0 = b.x + (b.w - tw) / 2;
+    return { b, cards: C.SPECIES.map((s, i) => ({ x: x0 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
+  }
   const subBackRect = (py, ph) => ({ x: W / 2 - 110, y: py + ph - 62, w: 220, h: 44 });
   const confirmRects = () => [{ x: W / 2 - 250, y: 392, w: 240, h: 48 }, { x: W / 2 + 10, y: 392, w: 240, h: 48 }];
   const endRects = (y) => [{ x: W / 2 - 250, y, w: 240, h: 52 }, { x: W / 2 + 10, y, w: 240, h: 52 }];
@@ -540,6 +552,12 @@
       pushBanner({ title: 'A sibling gave its life', sub: n > 0 ? n + (n === 1 ? ' sibling' : ' siblings') + ' left to watch over you' : 'No siblings are left to save you again', kind: 'kin', dur: 4.5 });
     });
     Game.on('molt:start', (d) => { ui.moltInfo = d || null; });
+    // the Widow Matriarch and the spiders she unlocks
+    Game.on('boss:notice', () => { pushBossBanner({ title: 'Too small to challenge', sub: 'Something huge guards this lair. Grow to a sub-adult first.', dur: 4.2 }); });
+    Game.on('boss:start', () => { pushBossBanner({ title: 'Widow Matriarch', sub: 'Latrodectus mactans  \u00b7  Guardian of the Old Oak Bark', dur: 3.6 }); ui.bossLag = 1; });
+    Game.on('boss:retreat', () => { pushBossBanner({ title: 'She retreats', sub: 'She heals in her lair while you are away', dur: 3.2 }); });
+    Game.on('boss:defeated', () => { pushBossBanner({ title: 'The Matriarch falls', sub: 'Her lair is yours', dur: 3.6 }); });
+    Game.on('species:unlocked', (d) => { const id = d && d.id; if (!id) return; ui.newSpecies.push(id); ui.unlockCard = { id, t0: real() + 1.8, dur: 11, played: false }; });
     Game.addScreenDrawer(Game.LAYER.HUD, drawHUDLayer);
     Game.addScreenDrawer(Game.LAYER.MENU, drawMenuLayer);
     Game.addScreenDrawer(Game.LAYER.OVERLAY, drawOverlayLayer);
@@ -547,6 +565,7 @@
 
   ui.reset = function () {
     ui.toasts = []; ui.banners = []; ui.flash = 0; ui.stageCard = null; ui.prompt = null; ui.picked = null; ui.newObj = {};
+    ui.unlockCard = null; ui.newSpecies = []; ui.bossLag = 1;
     ui.hint = { text: '', t0: 0, shownAt: 0, last: '' }; ui.sub = null; ui.idx = {}; ui.death = { cause: null }; ui.dragging = null;
     fog.t = -9; ui.molt = { offers: [], t0: 0, chosen: -1, stamp: -1 };
   };
@@ -636,19 +655,28 @@
       if (act === 0) { sfx('ui_click'); ui.sub = null; Game.toTitle(); } else if (act === 1) { sfx('ui_back'); ui.sub = null; }
       return;
     }
+    if (sub === 'species' && nav.back) { sfx('ui_back'); ui.sub = 'mode'; return; }   // back to the mode cards
     if (nav.back || (owner === 'paused' && nav.pause)) { sfx('ui_back'); ui.sub = null; return; }
     if (sub === 'settings') return updateSettings(nav);
     if (sub === 'mode') return updateMode(nav);
+    if (sub === 'species') return updateSpecies(nav);
     // howto / credits: a single Back button
     const pl = subPanelBox(sub), br = subBackRect(pl.y, pl.h);
     if (nav.confirm || (nav.click && inRect(nav.mx, nav.my, br))) { sfx('ui_back'); ui.sub = null; }
   }
 
-  // New Game -> pick a mode (cards side by side; arrows / mouse to choose, Enter / click to begin)
-  function startGame(mode) {
+  // New Game -> pick a mode (cards side by side; arrows / mouse to choose, Enter / click to begin). Once a second spider is unlocked a second
+  // step follows, "Choose your spider"; with only the starter there is nothing to choose and the game begins at once.
+  function startGame(mode, species) {
     ui.sub = null;
     if (Game.settings.mode !== mode) setSetting('mode', mode);   // remembered for next time and for Try Again
-    Game.newGame(mode);
+    if (species && Game.settings.species !== species) setSetting('species', species);
+    Game.newGame(mode, species);
+  }
+  function chooseMode(mode) {
+    if (Game.unlocks.list().length < 2) { startGame(mode); return; }
+    ui.pendingMode = mode; ui.sub = 'species';
+    ui.idx.species = Math.max(0, C.SPECIES.findIndex(s => s.id === Game.pickSpecies()));   // the spider played last is highlighted
   }
   function updateMode(nav) {
     const L = modeLayout(), n = L.cards.length, key = 'mode';
@@ -659,9 +687,27 @@
     if (nav.moved) for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k]) && k !== i) i = setIdx(key, k, n);
     if (nav.click) {
       if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = null; return; }
-      for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; sfx('ui_click'); startGame(C.MODES[k].id); return; }
+      for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; sfx('ui_click'); chooseMode(C.MODES[k].id); return; }
     }
-    if (nav.confirm) { sfx('ui_click'); startGame(C.MODES[i].id); }
+    if (nav.confirm) { sfx('ui_click'); chooseMode(C.MODES[i].id); }
+  }
+  function pickSpecies(i) {
+    const s = C.SPECIES[i]; if (!s) return;
+    if (!Game.unlocks.has(s.id)) { sfx('ui_back'); return; }   // still locked: the card says how to unlock it
+    sfx('ui_click'); startGame(ui.pendingMode, s.id);
+  }
+  function updateSpecies(nav) {
+    const L = speciesLayout(), n = L.cards.length, key = 'species';
+    if (ui.idx[key] == null) ui.idx[key] = 0;
+    let i = ui.idx[key];
+    if (nav.left || nav.up) i = setIdx(key, i - 1, n);
+    if (nav.right || nav.down) i = setIdx(key, i + 1, n);
+    if (nav.moved) for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k]) && k !== i) i = setIdx(key, k, n);
+    if (nav.click) {
+      if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = 'mode'; return; }
+      for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; pickSpecies(k); return; }
+    }
+    if (nav.confirm) pickSpecies(i);
   }
 
   function setSetting(key, v) {
@@ -847,13 +893,13 @@
 
   // ================================================================ CODEX
   const CODEX = { x: 40, y: 36, w: 1200, h: 648 };
-  const CODEX_TABS = ['Bestiary', 'Encyclopedia', 'Anatomy', 'Food Web'];
+  const CODEX_TABS = ['Bestiary', 'Encyclopedia', 'Anatomy', 'Food Web', 'Spiders'];
   const CONTENT = { x: 60, y: 100, w: 1160, h: 568 };
   const ROLE_ORDER = { prey: 0, neutral: 1, predator: 2, spider: 3 };
 
   function codexTabRects() {
-    const ws = [190, 212, 150, 150], r = []; let x = CODEX.x + 22;
-    for (let i = 0; i < 4; i++) { r.push({ x, y: CODEX.y + 14, w: ws[i], h: 38 }); x += ws[i] + 8; }
+    const ws = [190, 212, 150, 150, 160], r = []; let x = CODEX.x + 22;
+    for (let i = 0; i < CODEX_TABS.length; i++) { r.push({ x, y: CODEX.y + 14, w: ws[i], h: 38 }); x += ws[i] + 8; }
     return r;
   }
   function kindInfo(id) {
@@ -944,13 +990,26 @@
   function updateCodex(nav, dt) {
     const cx = ui.codex;
     if (nav.back || nav.codex) return closeCodex();
-    if (nav.tabNext) { cx.tab = (cx.tab + 1) % 4; sfx('ui_hover'); }
-    if (nav.tabPrev) { cx.tab = (cx.tab + 3) % 4; sfx('ui_hover'); }
+    const nt = CODEX_TABS.length;
+    if (nav.tabNext) { cx.tab = (cx.tab + 1) % nt; sfx('ui_hover'); }
+    if (nav.tabPrev) { cx.tab = (cx.tab + nt - 1) % nt; sfx('ui_hover'); }
     if (nav.click) { const tr = codexTabRects(); for (let i = 0; i < tr.length; i++) if (inRect(nav.mx, nav.my, tr[i]) && cx.tab !== i) { cx.tab = i; sfx('ui_click'); } }
     if (cx.tab === 0) updateBestiary(nav);
     else if (cx.tab === 1) updateEncy(nav);
     else if (cx.tab === 2) updateAnat(nav);
-    else updateWeb(nav);
+    else if (cx.tab === 3) updateWeb(nav);
+    else updateSpiders(nav);
+  }
+  // spiders: the roster of playable spiders (a list on the left, the selected one in detail on the right)
+  const SPI = { x: 60, y: 132, w: 360, ch: 118, gap: 12, dx: 440, dy: 100, dw: 780, dh: 568 };
+  const spiderCardRects = () => C.SPECIES.map((s, i) => ({ x: SPI.x, y: SPI.y + i * (SPI.ch + SPI.gap), w: SPI.w, h: SPI.ch }));
+  function updateSpiders(nav) {
+    const cx = ui.codex, n = C.SPECIES.length; let s = clamp(cx.ssel, 0, n - 1); const old = s;
+    if (nav.left || nav.up) s = (s + n - 1) % n;
+    if (nav.right || nav.down) s = (s + 1) % n;
+    if (nav.moved || nav.click) spiderCardRects().forEach((r, i) => { if (inRect(nav.mx, nav.my, r)) s = i; });
+    if (s !== old) sfx('ui_hover');
+    cx.ssel = s;
   }
   function updateBestiary(nav) {
     const cx = ui.codex, G = bestiaryGrid(), n = G.ids.length; if (!n) return;
@@ -1015,9 +1074,67 @@
     hudMinimap(ctx, p);
     hudClock(ctx);
     const cardH = hudStageCard(ctx);
-    hudBanner(ctx, cardH);
+    const bossH = hudBossBar(ctx, cardH);
+    hudBanner(ctx, cardH + bossH);
     if (p && sc === 'playing') { hudMateArrow(ctx, p); hudAlarms(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
     hudToasts(ctx);
+    hudUnlockCard(ctx);
+  }
+
+  // the Widow Matriarch's health bar (top centre) during her intro and fight, and for a moment after she falls. Returns the height it takes
+  // so the banner can sit below it.
+  function hudBossBar(ctx, cardH) {
+    const B = Game.boss;
+    const shown = B && B.lair && (B.active() || (B.state === 'defeated' && B.deadT < 2.5));
+    if (!shown) { ui.bossLag = 1; return 0; }
+    const sci = Game.settings.science ? 30 : 0, w = 560, h = 52, x = (W - w) / 2, y = 66 + (cardH || 0) + sci, t = real();
+    const dead = B.state === 'defeated', fight = B.state === 'fight';
+    const real_f = dead ? 0 : B.hpFrac(), f = B.state === 'intro' ? smooth(clamp(B.introT / 1.6, 0, 1)) : real_f;
+    const dt = Math.min(0.05, Game.time.dt || 0.016);
+    ui.bossLag = f >= ui.bossLag ? f : ui.bossLag + (f - ui.bossLag) * Math.min(1, dt * 2);   // the pale tail shows what the last hit took
+    ctx.save(); ctx.globalAlpha = dead ? clamp((2.5 - B.deadT) / 0.8, 0, 1) : 1;
+    panel(ctx, x, y, w, h, { fill: COL.panelSoft, border: 'rgba(229,96,77,0.45)' });
+    txt(ctx, 'Widow Matriarch', x + 18, y + 25, { size: 18, font: SERIF, weight: 700, color: '#ff9c8a' });
+    if (fight && (B.mode === 'recover' || B.mode === 'stun')) { ctx.save(); ctx.globalAlpha = 0.7 + 0.3 * Math.sin(t * 14); chip(ctx, 'Exposed – bite her!', x + 18 + measure(ctx, 'Widow Matriarch', 18, 700, SERIF) + 12, y + 9, COL.amberHi); ctx.restore(); }
+    for (let i = 0; i < 3; i++) {   // phase pips
+      const px = x + w - 24 - (2 - i) * 16; ctx.beginPath(); ctx.arc(px, y + 20, 5, 0, 7);
+      if (i < (B.phase || 1) && !dead) { ctx.fillStyle = '#ff7a66'; ctx.fill(); } else { ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.stroke(); }
+    }
+    const bx = x + 18, by = y + 32, bw = w - 36, bh = 12;
+    rr(ctx, bx, by, bw, bh, 6); ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fill();
+    ctx.save(); rr(ctx, bx, by, bw, bh, 6); ctx.clip();
+    if (ui.bossLag > f) { ctx.fillStyle = 'rgba(255,214,190,0.55)'; ctx.fillRect(bx, by, bw * ui.bossLag, bh); }
+    if (f > 0.001) { const g = ctx.createLinearGradient(0, by, 0, by + bh); g.addColorStop(0, '#ff7a66'); g.addColorStop(1, '#b8281c'); ctx.fillStyle = g; ctx.fillRect(bx, by, bw * f, bh); ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(bx, by + 1, bw * f, 3); }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'; [0.6, 0.3].forEach(q => ctx.fillRect(bx + bw * q - 0.5, by - 1, 1, bh + 2));   // where her next phase begins
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.16)'; rr(ctx, bx + 0.5, by + 0.5, bw - 1, bh - 1, 6); ctx.stroke();
+    ctx.restore();
+    return h + 4 + sci;
+  }
+
+  // "New spider unlocked": appears a moment after the Matriarch falls, then fades
+  function hudUnlockCard(ctx) {
+    const c = ui.unlockCard; if (!c) return;
+    const age = real() - c.t0; if (age < 0) return;
+    if (age > c.dur) { ui.unlockCard = null; return; }
+    if (!c.played) { c.played = true; sfx('unlock'); }
+    const sp = Game.speciesInfo(c.id), w = 660, h = 236, x = (W - w) / 2, y = 84, t = real();
+    const a = clamp(Math.min(age / 0.6, (c.dur - age) / 1.2), 0, 1), e = smooth(a);
+    ctx.save(); ctx.globalAlpha = e; ctx.translate(0, (1 - e) * -16);
+    panel(ctx, x, y, w, h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.5)', accent: COL.amber });
+    spaced(ctx, 'NEW SPIDER UNLOCKED', x + w / 2, y + 34, 5, { size: 13, weight: 700, color: COL.amberHi, align: 'center' });
+    const px = x + 112, py = y + 128;
+    ctx.save(); ctx.beginPath(); ctx.arc(px, py, 76, 0, 7);
+    const bg = ctx.createRadialGradient(px, py - 16, 8, px, py, 78); bg.addColorStop(0, 'rgba(255,228,180,0.24)'); bg.addColorStop(1, 'rgba(0,0,0,0.4)'); ctx.fillStyle = bg; ctx.fill(); ctx.clip();
+    safe(() => P().drawPortrait(ctx, c.id, px, py, 150, { stage: 4, belly: c.id === 'widow' ? 0.5 + 0.5 * Math.sin(t * 1.3) : 0, t }));
+    ctx.restore();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,205,130,0.5)'; ctx.beginPath(); ctx.arc(px, py, 76, 0, 7); ctx.stroke();
+    const x0 = x + 212, w0 = w - 212 - 24;
+    txt(ctx, sp.name, x0, y + 84, { size: 34, font: SERIF, weight: 700, color: COL.amberHi });
+    txt(ctx, sp.latin, x0, y + 108, { size: 15, italic: true, font: SERIF, color: COL.amberDim });
+    para(ctx, sp.blurb, x0, y + 120, w0, { size: 14, lh: 19, color: COL.text, maxLines: 4 });
+    txt(ctx, 'Choose her when you start a new journey. This one carries on as you are.', x0, y + h - 18, { size: 12.5, italic: true, font: SERIF, color: COL.text2 });
+    ctx.restore();
   }
 
   function hudVignettes(ctx, p) {
@@ -1060,7 +1177,8 @@
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     const st = p.stage || 0, last = st >= C.STAGES.length - 1;
     txt(ctx, stageName(st), x + 16, y + 29, { size: 19, weight: 700, font: SERIF, color: COL.amberHi });
-    txt(ctx, 'Stage ' + (st + 1) + ' / ' + C.STAGES.length, x + w - 16, y + 28, { size: 11, color: COL.text3, align: 'right', weight: 600 });
+    const spName = Game.state.species !== C.SPECIES[0].id ? Game.speciesInfo(Game.state.species).name + '  ·  ' : '';   // say which spider you are when it is not the starter
+    txt(ctx, spName + 'Stage ' + (st + 1) + ' / ' + C.STAGES.length, x + w - 16, y + 28, { size: 11, color: COL.text3, align: 'right', weight: 600 });
     // growth
     const need = p.growthNeeded || (C.STAGES[st] && C.STAGES[st].growthNeeded) || 0;
     const gf = last ? 1 : (need > 0 ? clamp((p.growth || 0) / need, 0, 1) : 0);
@@ -1205,7 +1323,7 @@
     const g = ctx.createLinearGradient(W / 2 - 420, 0, W / 2 + 420, 0); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, 'rgba(8,5,3,0.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g; ctx.fillRect(W / 2 - 420, y - 40, 840, 104);
     const title = b.title.toUpperCase();
-    const tw = spaced(ctx, title, W / 2, y + 2 + (1 - e) * 6, b.kind === 'zone' ? 6 : 4, { size: b.kind === 'zone' ? 34 : 28, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
+    const tw = spaced(ctx, title, W / 2, y + 2 + (1 - e) * 6, b.kind === 'zone' ? 6 : 4, { size: b.kind === 'zone' ? 34 : 28, font: SERIF, weight: 700, color: b.kind === 'boss' ? '#ff9c8a' : COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.55)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(W / 2 - tw / 2 - 30, y + 20); ctx.lineTo(W / 2 - 8, y + 20); ctx.moveTo(W / 2 + 8, y + 20); ctx.lineTo(W / 2 + tw / 2 + 30, y + 20); ctx.stroke();
     ctx.fillStyle = COL.amber; ctx.beginPath(); ctx.moveTo(W / 2, y + 15); ctx.lineTo(W / 2 + 4, y + 20); ctx.lineTo(W / 2, y + 25); ctx.lineTo(W / 2 - 4, y + 20); ctx.closePath(); ctx.fill();
@@ -1357,6 +1475,14 @@
       const pul = 0.5 + 0.5 * Math.sin(real() * 5); ctx.fillStyle = 'rgba(255,143,208,' + (0.6 + 0.4 * pul) + ')';
       ctx.beginPath(); ctx.arc(mx(mate.x), my(mate.y), 3 + 2 * pul, 0, 7); ctx.fill();
     }
+    // the Widow Matriarch's lair: marked once you are big enough to take her on (or have found it)
+    const BS = Game.boss;
+    if (BS && BS.lair && (BS.state === 'dormant' || BS.active()) && p && (p.stage >= BS.MIN_STAGE || BS.discovered)) {
+      const lx = mx(BS.lair.x), ly = my(BS.lair.y), pul = 0.5 + 0.5 * Math.sin(real() * 3), rad = big ? 5.2 : 3.8, live = p.stage >= BS.MIN_STAGE;
+      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(255,110,90,' + (live ? 0.5 + 0.45 * pul : 0.45) + ')'; ctx.beginPath(); ctx.arc(lx, ly, rad + (live ? pul * 1.6 : 0), 0, 7); ctx.stroke();
+      ctx.fillStyle = '#12090c'; ctx.beginPath(); ctx.arc(lx, ly, rad - 0.6, 0, 7); ctx.fill();
+      ctx.fillStyle = '#e5171f'; ctx.beginPath(); ctx.arc(lx + rad * 0.3, ly + rad * 0.35, rad * 0.28, 0, 7); ctx.fill();
+    }
     // player
     if (p) {
       const px = mx(p.x), py = my(p.y), pul = 0.5 + 0.5 * Math.sin(real() * 4);
@@ -1458,7 +1584,8 @@
     const E = Game.edu;
     if (E && E.counts) { const c = E.counts(); txt(ctx, 'Facts discovered  ' + c.unlocked + ' / ' + c.total, W - 24, H - 24, { size: 13, color: COL.text3, align: 'right', weight: 600 }); }
     txt(ctx, 'Discoveries are kept between journeys', 24, H - 24, { size: 12, color: COL.text3, italic: true, font: SERIF });
-    drawVersion(ctx, W - 24, H - 46, 'right');
+    txt(ctx, 'Spiders unlocked  ' + Game.unlocks.list().length + ' / ' + C.SPECIES.length, W - 24, H - 46, { size: 13, color: COL.text3, align: 'right', weight: 600 });
+    drawVersion(ctx, W - 24, H - 68, 'right');
     ctx.restore();
   }
 
@@ -1466,6 +1593,7 @@
   function subPanelBox(sub) {
     if (sub === 'settings') return settingsLayout();
     if (sub === 'mode') return modeLayout().b;
+    if (sub === 'species') return speciesLayout().b;
     if (sub === 'howto') return { x: (W - 900) / 2, y: 46, w: 900, h: 628 };
     return { x: (W - 680) / 2, y: 100, w: 680, h: 520 };
   }
@@ -1475,14 +1603,40 @@
     if (sub === 'confirmQuit') return drawConfirmQuit(ctx);
     const b = subPanelBox(sub);
     panel(ctx, b.x, b.y, b.w, b.h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
-    const title = { settings: 'Settings', mode: 'Choose your journey', howto: 'How to Play', credits: 'Credits' }[sub];
+    const title = { settings: 'Settings', mode: 'Choose your journey', species: 'Choose your spider', howto: 'How to Play', credits: 'Credits' }[sub];
     txt(ctx, title, W / 2, b.y + 48, { size: 30, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.35)'; ctx.beginPath(); ctx.moveTo(b.x + 60, b.y + 62); ctx.lineTo(b.x + b.w - 60, b.y + 62); ctx.stroke();
     if (sub === 'settings') drawSettings(ctx, b);
     else if (sub === 'mode') drawMode(ctx, b);
+    else if (sub === 'species') drawSpecies(ctx, b);
     else if (sub === 'howto') drawHowTo(ctx, b);
     else drawCredits(ctx, b);
-    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode', { size: 17 });
+    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode' && sub !== 'species', { size: 17 });
+  }
+
+  // one card per spider: portrait, perks (or, for a locked one, how to unlock it)
+  function drawSpecies(ctx, b) {
+    const L = speciesLayout(), foc = ui.idx.species || 0, t = real();
+    L.cards.forEach((r, i) => {
+      const s = C.SPECIES[i], open = Game.unlocks.has(s.id), f = i === foc, col = open ? COL.amber : COL.bad;
+      panel(ctx, r.x, r.y, r.w, r.h, { fill: f ? 'rgba(34,24,14,0.96)' : 'rgba(18,13,9,0.8)', border: f ? col : COL.line, bw: f ? 2 : 1, r: 14 });
+      txt(ctx, s.name, r.x + 22, r.y + 40, { size: L.cards.length > 2 ? 24 : 27, font: SERIF, weight: 700, color: open ? (f ? COL.amberHi : COL.text) : COL.text3 });
+      txt(ctx, (open ? s.tag : 'Locked').toUpperCase(), r.x + r.w - 22, r.y + 36, { size: 11, weight: 700, color: col, align: 'right' });
+      txt(ctx, s.latin, r.x + 22, r.y + 62, { size: 14, italic: true, font: SERIF, color: COL.text3 });
+      const px = r.x + r.w / 2, py = r.y + 136;
+      ctx.save(); ctx.beginPath(); ctx.arc(px, py, 62, 0, 7);
+      const bg = ctx.createRadialGradient(px, py - 14, 6, px, py, 64); bg.addColorStop(0, open ? 'rgba(255,228,180,0.2)' : 'rgba(255,255,255,0.06)'); bg.addColorStop(1, 'rgba(0,0,0,0.38)'); ctx.fillStyle = bg; ctx.fill(); ctx.clip();
+      safe(() => P().drawPortrait(ctx, s.id, px, py, 124, { stage: 4, silhouette: !open, t }));
+      ctx.restore();
+      if (open) {
+        let y = r.y + 220;
+        (s.perks || []).forEach(pk => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(r.x + 28, y + 9, 2.6, 0, 7); ctx.fill(); y = para(ctx, pk, r.x + 40, y, r.w - 62, { size: 13.5, lh: 18, color: COL.text }) + 3; });
+      } else {
+        spaced(ctx, 'HOW TO UNLOCK', r.x + 22, r.y + 236, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+        para(ctx, s.unlock || 'Locked.', r.x + 22, r.y + 248, r.w - 44, { size: 14, lh: 20, color: COL.text2 });
+      }
+    });
+    txt(ctx, 'Left / Right to choose  ·  Enter to begin  ·  Esc to go back  ·  your choice is remembered', W / 2, b.y + b.h - 86, { size: 12, color: COL.text3, align: 'center' });
   }
 
   function drawMode(ctx, b) {
@@ -1575,7 +1729,7 @@
     if (ui.sub) { drawSub(ctx); ctx.restore(); return; }
     txt(ctx, 'Paused', W / 2, 172, { size: 54, font: SERIF, weight: 700, color: COL.amberHi, align: 'center', shadow: true });
     const p = P(), E = Game.edu;
-    const info = Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
+    const info = Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + spiderLabel() + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
     txt(ctx, info, W / 2, 208, { size: 15, color: COL.text2, align: 'center', font: SERIF, italic: true });
     ctx.strokeStyle = 'rgba(255,205,130,0.4)'; ctx.beginPath(); ctx.moveTo(W / 2 - 120, 226); ctx.lineTo(W / 2 + 120, 226); ctx.stroke();
     const rects = pauseRects(), foc = ui.idx.pause || 0;
@@ -1661,9 +1815,9 @@
     panel(ctx, CODEX.x, CODEX.y, CODEX.w, CODEX.h, { fill: 'rgba(14,10,7,0.94)', border: 'rgba(255,205,130,0.3)', r: 18 });
     const E = Game.edu, ec = E ? E.counts() : { unlocked: 0, total: 0 };
     const ids = bestiaryIds(), seenN = ids.filter(isSeen).length;
-    const labels = ['Bestiary  ' + seenN + '/' + ids.length, 'Encyclopedia  ' + ec.unlocked + '/' + ec.total, 'Anatomy', 'Food Web'];
+    const labels = ['Bestiary  ' + seenN + '/' + ids.length, 'Encyclopedia  ' + ec.unlocked + '/' + ec.total, 'Anatomy', 'Food Web', 'Spiders  ' + Game.unlocks.list().length + '/' + C.SPECIES.length];
     const tr = codexTabRects(), mouse = Game.input.mouse;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < tr.length; i++) {
       const r = tr[i], act = i === cx.tab, hov = inRect(mouse.x, mouse.y, r);
       if (act) { rr(ctx, r.x, r.y, r.w, r.h, 10); ctx.fillStyle = 'rgba(242,180,90,0.14)'; ctx.fill(); ctx.fillStyle = COL.amber; ctx.fillRect(r.x + 14, r.y + r.h - 3, r.w - 28, 3); }
       else if (hov) { rr(ctx, r.x, r.y, r.w, r.h, 10); ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fill(); }
@@ -1676,8 +1830,70 @@
     txt(ctx, 'Tabs', hx - 4, CODEX.y + 38, { size: 12, color: COL.text3, align: 'right' }); hx -= measure(ctx, 'Tabs', 12) + 12;
     hx -= keycap(ctx, 'E', hx - 22, CODEX.y + 26, { h: 22 }) + 3; hx -= keycap(ctx, 'Q', hx - 22, CODEX.y + 26, { h: 22 }) + 3;
     ctx.fillStyle = COL.line; ctx.fillRect(CODEX.x + 20, CODEX.y + 62, CODEX.w - 40, 1);
-    switch (cx.tab) { case 0: drawBestiary(ctx); break; case 1: drawEncy(ctx); break; case 2: drawAnatomy(ctx); break; default: drawFoodWeb(ctx); }
+    switch (cx.tab) { case 0: drawBestiary(ctx); break; case 1: drawEncy(ctx); break; case 2: drawAnatomy(ctx); break; case 3: drawFoodWeb(ctx); break; default: drawSpiders(ctx); }
     ctx.restore();
+  }
+
+  // ------------------------------------------------------------- spiders
+  function drawSpiders(ctx) {
+    const cx = ui.codex, n = C.SPECIES.length, t = real();
+    cx.ssel = clamp(cx.ssel, 0, n - 1);
+    txt(ctx, 'Unlocked ' + Game.unlocks.list().length + ' of ' + n + ' spiders', SPI.x, 118, { size: 13, weight: 600, color: COL.text2 });
+    spiderCardRects().forEach((r, i) => {
+      const s = C.SPECIES[i], open = Game.unlocks.has(s.id), sel = i === cx.ssel;
+      if (sel) { ctx.save(); ctx.shadowColor = 'rgba(242,180,90,0.45)'; ctx.shadowBlur = 16; panel(ctx, r.x, r.y, r.w, r.h, { fill: COL.panelHi, border: COL.amber, bw: 2, r: 12 }); ctx.restore(); }
+      else panel(ctx, r.x, r.y, r.w, r.h, { fill: open ? 'rgba(30,22,14,0.9)' : 'rgba(18,13,9,0.9)', r: 12 });
+      const px = r.x + 62, py = r.y + r.h / 2;
+      ctx.save(); ctx.beginPath(); ctx.arc(px, py, 46, 0, 7);
+      const bg = ctx.createRadialGradient(px, py - 10, 4, px, py, 48); bg.addColorStop(0, open ? 'rgba(255,228,180,0.2)' : 'rgba(255,255,255,0.06)'); bg.addColorStop(1, 'rgba(0,0,0,0.34)'); ctx.fillStyle = bg; ctx.fill(); ctx.clip();
+      safe(() => P().drawPortrait(ctx, s.id, px, py, 92, { stage: 4, silhouette: !open, t }));
+      ctx.restore();
+      txt(ctx, fit(ctx, s.name, 214, 20, 700, SERIF), r.x + 124, r.y + 42, { size: 20, font: SERIF, weight: 700, color: open ? (sel ? COL.amberHi : COL.text) : COL.text3 });
+      txt(ctx, fit(ctx, s.latin, 214, 12.5, 400, SERIF, true), r.x + 124, r.y + 62, { size: 12.5, italic: true, font: SERIF, color: COL.text3 });
+      chip(ctx, open ? 'Unlocked' : 'Locked', r.x + 124, r.y + 76, open ? COL.good : COL.bad);
+    });
+    drawSpiderDetail(ctx, C.SPECIES[cx.ssel]);
+  }
+  function drawSpiderDetail(ctx, s) {
+    const R = { x: SPI.dx, y: SPI.dy, w: SPI.dw, h: SPI.dh }, open = Game.unlocks.has(s.id), t = real();
+    panel(ctx, R.x, R.y, R.w, R.h, { fill: 'rgba(24,17,11,0.92)', r: 14 });
+    const px = R.x + 24 + 110, py = R.y + 24 + 110;
+    ctx.save(); ctx.beginPath(); ctx.arc(px, py, 112, 0, 7);
+    const bg = ctx.createRadialGradient(px, py - 22, 8, px, py, 114); bg.addColorStop(0, open ? 'rgba(255,228,180,0.22)' : 'rgba(255,255,255,0.07)'); bg.addColorStop(1, 'rgba(0,0,0,0.38)'); ctx.fillStyle = bg; ctx.fill(); ctx.clip();
+    safe(() => P().drawPortrait(ctx, s.id, px, py, 212, { stage: 4, silhouette: !open, belly: open && s.id === 'widow' ? 0.5 + 0.5 * Math.sin(t * 1.3) : 0, t }));
+    ctx.restore();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = open ? 'rgba(255,205,130,0.5)' : COL.lineSoft; ctx.beginPath(); ctx.arc(px, py, 112, 0, 7); ctx.stroke();
+    const x0 = R.x + 270, w0 = R.w - 270 - 24;
+    txt(ctx, s.name, x0, R.y + 58, { size: 34, font: SERIF, weight: 700, color: open ? COL.amberHi : COL.text3 });
+    txt(ctx, s.latin, x0, R.y + 84, { size: 15, italic: true, font: SERIF, color: COL.amberDim });
+    let cxp = x0; cxp += chip(ctx, s.tag, cxp, R.y + 98, COL.amber) + 6; chip(ctx, open ? 'Unlocked' : 'Locked', cxp, R.y + 98, open ? COL.good : COL.bad);
+    let y;
+    if (open) {
+      y = para(ctx, s.blurb, x0, R.y + 138, w0, { size: 15, lh: 22, color: COL.text });
+      y += 12; spaced(ctx, 'PERKS AND TRADE-OFFS', x0, y + 12, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' }); y += 24;
+      (s.perks || []).forEach(pk => { ctx.fillStyle = COL.amber; ctx.beginPath(); ctx.arc(x0 + 4, y + 10, 3, 0, 7); ctx.fill(); y = para(ctx, pk, x0 + 18, y, w0 - 18, { size: 14, lh: 19, color: COL.text }) + 4; });
+    } else {
+      y = para(ctx, 'You have not unlocked this spider yet. Finish a challenge and it joins your roster for good, ready to pick whenever you start a new journey.', x0, R.y + 138, w0, { size: 15, lh: 22, color: COL.text2 });
+      y += 14; spaced(ctx, 'HOW TO UNLOCK', x0, y + 12, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' }); y += 24;
+      y = para(ctx, s.unlock || 'Locked.', x0, y, w0, { size: 15, lh: 22, color: COL.text });
+      const bk = s.boss && (KINDS() || {})[s.boss];
+      if (bk) {
+        y += 14; const seen = isSeen(s.boss);
+        ctx.save(); ctx.beginPath(); ctx.arc(x0 + 30, y + 30, 30, 0, 7); ctx.fillStyle = seen ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.1)'; ctx.fill(); ctx.clip(); drawKind(ctx, s.boss, x0 + 30, y + 30, 54, { silhouette: !seen }); ctx.restore();
+        txt(ctx, seen ? bk.name : 'Something large and dark...', x0 + 74, y + 26, { size: 16, weight: 700, font: SERIF, color: seen ? '#ff9c8a' : COL.text3 });
+        txt(ctx, seen ? 'Not yet defeated' : 'You have not found her yet. Explore the Old Oak Bark.', x0 + 74, y + 46, { size: 12.5, color: COL.text3 });
+      }
+    }
+    // life stages: how she changes as she molts
+    const sy = R.y + R.h - 176;
+    ctx.fillStyle = COL.lineSoft; ctx.fillRect(R.x + 24, sy - 12, R.w - 48, 1);
+    spaced(ctx, 'LIFE STAGES', R.x + 24, sy + 6, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    const sc = [0.5, 0.64, 0.78, 0.9, 1], cw = (R.w - 48) / 5;
+    for (let k = 0; k < 5; k++) {
+      const qx = R.x + 24 + cw * (k + 0.5), qy = sy + 78;
+      safe(() => P().drawPortrait(ctx, s.id, qx, qy, 92 * sc[k], { stage: k, silhouette: !open, silColor: '#3b3025', t }));
+      txt(ctx, stageName(k), qx, sy + 152, { size: 12, weight: 600, color: open ? COL.text2 : COL.text3, align: 'center' });
+    }
   }
 
   // ------------------------------------------------------------- bestiary
@@ -2022,7 +2238,7 @@
     panel(ctx, bx, by, bw, L.ph, { fill: 'rgba(16,10,8,0.93)', border: 'rgba(229,96,77,0.4)', r: 18 });
     spaced(ctx, 'YOUR JOURNEY ENDS', W / 2, by + 44, 6, { size: 13, weight: 700, color: '#c98578', align: 'center' });
     txt(ctx, d.title, W / 2, by + 104, { size: 50, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center', shadow: true });
-    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time) + '  \u00b7  ' + Game.modeInfo(Game.state.mode).name + ' mode', W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time) + '  \u00b7  ' + spiderLabel() + Game.modeInfo(Game.state.mode).name + ' mode', W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
     ctx.fillStyle = 'rgba(229,96,77,0.35)'; ctx.fillRect(bx + 80, by + 152, bw - 160, 1);
     para(ctx, d.flavor, bx + 70, by + L.flavorY, bw - 140, { size: 17, lh: 25, italic: true, font: SERIF, color: COL.text, align: 'center', maxLines: 3 });
     const sy = by + L.boxY;
@@ -2035,7 +2251,22 @@
     const rects = endRects(by + L.btnY), foc = ui.idx.gameover == null ? 0 : ui.idx.gameover, lock = real() - ui.enterT < 0.9;
     drawButton(ctx, rects[0], 'Try Again', foc === 0 && !lock, { size: 18, disabled: lock });
     drawButton(ctx, rects[1], 'Title Screen', foc === 1 && !lock, { size: 18, disabled: lock });
+    drawUnlockNote(ctx, false);
     ctx.restore();
+  }
+
+  // "Black Widow  ·  " when you are not the starter spider (empty otherwise), for the pause and end screens
+  function spiderLabel() { return Game.state.species !== C.SPECIES[0].id ? Game.speciesInfo(Game.state.species).name + '  ·  ' : ''; }
+  // a line at the foot of the end screens: a spider unlocked this run, or (after a win) a teaser for the one still locked
+  function drawUnlockNote(ctx, teaser) {
+    const got = ui.newSpecies.length ? Game.speciesInfo(ui.newSpecies[ui.newSpecies.length - 1]) : null;
+    let text = null, col = COL.amberHi;
+    if (got) text = 'New spider unlocked: ' + got.name + '. Choose her when you start a new journey.';
+    else if (teaser) { const lock = C.SPECIES.find(s => !Game.unlocks.has(s.id) && s.boss); if (lock) { text = 'A great shadow still guards a lair in the Old Oak Bark. Beat her to unlock a new spider.'; col = COL.text2; } }
+    if (!text) return;
+    const w = measure(ctx, text, 14, 600) + 44, x = (W - w) / 2, y = H - 36;
+    panel(ctx, x, y, w, 26, { fill: 'rgba(14,10,7,0.88)', r: 13, border: got ? 'rgba(255,205,130,0.55)' : COL.line });
+    txt(ctx, text, W / 2, y + 13.5, { size: 14, weight: 600, color: col, align: 'center', base: 'middle' });
   }
 
   // ================================================================ VICTORY
@@ -2105,6 +2336,7 @@
     const rects = endRects(626), foc = ui.idx.victory == null ? 0 : ui.idx.victory, lock = real() - ui.enterT < 1.4;
     drawButton(ctx, rects[0], 'Play Again', foc === 0 && !lock, { size: 18, disabled: lock });
     drawButton(ctx, rects[1], 'Title Screen', foc === 1 && !lock, { size: 18, disabled: lock });
+    drawUnlockNote(ctx, true);
     ctx.restore();
   }
 

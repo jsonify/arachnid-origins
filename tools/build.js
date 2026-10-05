@@ -1,6 +1,6 @@
 /* Bundle src/*.js into a single self-contained HTML file: node tools/build.js [out.html] */
 const fs = require('fs'), path = require('path');
-const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'edu', 'audio', 'ui', 'main'];
+const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'boss', 'edu', 'audio', 'ui', 'main'];
 const out = process.argv[2] || path.join(__dirname, '..', 'dist', 'arachnid-origins.html');
 // the version the game shows (src/core.js) must match package.json, or the bundle would announce the wrong build
 const shown = (/VERSION:\s*'([^']+)'/.exec(fs.readFileSync(path.join(__dirname, '..', 'src', 'core.js'), 'utf8')) || [])[1], pkg = require('../package.json').version;
