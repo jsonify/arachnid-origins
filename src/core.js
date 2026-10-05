@@ -10,7 +10,20 @@
 
   // ---------------------------------------------------------------- constants
   const C = Game.C = {
-    VERSION: '1.0.0',           // shown on the title and pause screens; keep in step with package.json (tools/build.js checks)
+    VERSION: '1.1.0',           // shown on the title and pause screens; keep in step with package.json and CHANGELOG[0] (tools/check_version.js checks)
+    // newest first; shown in Settings > Changelog. Add an entry with `node tools/bump.js <major|minor|patch> "what changed"`
+    CHANGELOG: [
+      { version: '1.1.0', date: '2026-10-05', notes: [
+        'Added this Changelog, in Settings.',
+        'Fixed the "Catch a flying insect in a web" objective, which never completed when a flyer was caught.',
+      ] },
+      { version: '1.0.0', date: '2026-10-05', notes: [
+        'First versioned release.',
+        'Brood and Survival modes, with sibling revives in Brood.',
+        'Defeat the Widow Matriarch to unlock the Black Widow as a playable spider.',
+        'Mouse-aim controls and an on-screen key guide.',
+      ] },
+    ],
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle
