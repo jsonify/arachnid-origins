@@ -48,7 +48,7 @@
     // Every sfx name that may be emitted via Game.emit('sfx', {name, x, y, vol}).
     SFX: ['step', 'sprint', 'bite', 'eat', 'drink', 'spin', 'web_place', 'web_snap', 'trap', 'struggle',
           'hurt', 'death', 'molt_start', 'molt_end', 'levelup', 'ui_click', 'ui_hover', 'ui_back', 'unlock',
-          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory'],
+          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory', 'revive'],
     KEYMAP: {
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],

@@ -529,6 +529,12 @@
       ui.stageCard = { stage: d.stage, t0: real(), dur: 11 };
     });
     Game.on('player:died', (d) => { ui.death.cause = d && d.cause; });
+    Game.on('player:downed', () => { pushBanner({ title: 'You are down', sub: 'A sibling rushes to your side...', kind: 'kin', dur: 2.2 }); });
+    Game.on('player:revived', (d) => {
+      const n = (d && d.left) || 0;
+      ui.banners = ui.banners.filter(b => b.kind !== 'kin');   // replaces "You are down" at once instead of queueing behind it
+      pushBanner({ title: 'A sibling gave its life', sub: n > 0 ? n + (n === 1 ? ' sibling' : ' siblings') + ' left to watch over you' : 'No siblings are left to save you again', kind: 'kin', dur: 4.5 });
+    });
     Game.on('molt:start', (d) => { ui.moltInfo = d || null; });
     Game.addScreenDrawer(Game.LAYER.HUD, drawHUDLayer);
     Game.addScreenDrawer(Game.LAYER.MENU, drawMenuLayer);
@@ -762,7 +768,7 @@
 
   // ------------------------------------------------- interaction prompts
   function computePrompt() {
-    const p = P(), w = Game.world; if (!p || p.dead || p.molting || !w) return null;
+    const p = P(), w = Game.world; if (!p || p.dead || p.reviving || p.molting || !w) return null;
     const pr = p.radius || 8;
     // adult goals first
     const cr = Game.creatures;
@@ -993,7 +999,7 @@
     const t = real(), pulse = 0.5 + 0.5 * Math.sin(t * 5);
     let a = 0, rgb = '210,30,20';
     if (ui.flash > 0) a = Math.max(a, ui.flash * 0.6);
-    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
+    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead && !p.reviving) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
     const danger = (Game.state && Game.state.danger) || 0;
     if (danger > 0.35) a = Math.max(a, (danger - 0.3) * 0.22 * (0.7 + 0.3 * pulse));
     if (a <= 0.01) return;
@@ -1002,6 +1008,7 @@
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
 
+  const STATS_H = 222;   // height of the top-left stats panel; the key guide sits just below it
   function hudKeyGuide(ctx) {
     const aim = !!Game.settings.mouseAim;
     const rows = [
@@ -1012,7 +1019,7 @@
       [['1', '2', '3', '4'], 'Select web'], [['E'], 'Interact'], [['R'], 'Rest'],
       [['B', 'M', 'F'], 'Codex / Map / Science'], [['H', 'Z', 'Esc'], 'Guide / Zoom / Pause'],
     ].filter(r => r[1]);
-    const x = 16, y = 226, w = 272, rh = 21, h = 32 + rows.length * rh;
+    const x = 16, y = 16 + STATS_H + 12, w = 272, rh = 20, h = 32 + rows.length * rh;
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     spaced(ctx, 'KEY GUIDE', x + 16, y + 21, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
     rows.forEach((r, i) => {
@@ -1023,7 +1030,7 @@
   }
 
   function hudStats(ctx, p) {
-    const x = 16, y = 16, w = 272, h = 198, t = real();
+    const x = 16, y = 16, w = 272, h = STATS_H, t = real();
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     const st = p.stage || 0, last = st >= C.STAGES.length - 1;
     txt(ctx, stageName(st), x + 16, y + 29, { size: 19, weight: 700, font: SERIF, color: COL.amberHi });
@@ -1050,6 +1057,16 @@
       bar(ctx, x + 48, ry, w - 48 - 56, 12, f, col, { border: low ? 'rgba(255,90,70,' + (0.5 + 0.5 * pulse) + ')' : null });
       txt(ctx, String(m[4]) + (i === 4 ? '/' + Math.round(p.maxSilk || 0) : ''), x + w - 16, ry + 6.5, { size: 12, weight: 600, color: low ? '#ff9a8a' : COL.text2, align: 'right', base: 'middle' });
     }
+    // siblings: each one still with you is a revive
+    const cr = Game.creatures, left = (cr && cr.siblings) | 0, slots = (cr && cr.siblingsMax) || 5, sy = y + 202;
+    ctx.fillStyle = COL.lineSoft; ctx.fillRect(x + 16, sy - 9, w - 32, 1);
+    txt(ctx, 'Siblings', x + 16, sy + 8, { size: 12, weight: 600, color: COL.text3, base: 'middle' });
+    for (let i = 0; i < slots; i++) {
+      const sx = x + 90 + i * 24;
+      if (i < left) drawKind(ctx, 'kin', sx, sy + 8, 18);
+      else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy + 8, 5.5, 0, 7); ctx.stroke(); }
+    }
+    txt(ctx, left + (left === 1 ? ' revive' : ' revives'), x + w - 16, sy + 8, { size: 12, weight: 600, color: left > 0 ? COL.amberHi : COL.text3, align: 'right', base: 'middle' });
     // status chips
     let cx = x, cy = y + h + 8;
     if (p.moltTimer > 0) cx += chip(ctx, 'Soft shell ' + Math.ceil(p.moltTimer) + 's', cx, cy, '#e9c46a') + 6;

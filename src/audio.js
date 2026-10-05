@@ -117,12 +117,13 @@
     rest(V) { const t = V.t; [220, 277.2, 329.6].forEach((f, i) => pad(V.out, f, t + i * 0.1, 2.2, 0.06, 0.7)); nz(V.out, t, 1.5, 0.045, 'lowpass', 500, 200, 0.7, 0.5); },
     courtship(V) { const t = V.t; [659.25, 783.99, 880, 987.77, 880, 783.99, 987.77, 1174.7].forEach((f, i) => pluck(V.out, f, t + i * 0.17, 0.17, 0.8)); },
     egg(V) { const t = V.t; [261.6, 392, 523.25].forEach((f, i) => bell(V.out, f, t + i * 0.24, 0.2, 1.8)); nz(V.out, t + 0.4, 0.9, 0.025, 'highpass', 6500, 0, 0.7, 0.2); },
+    revive(V) { const t = V.t; [392, 523.25, 659.25, 783.99].forEach((f, i) => bell(V.out, f, t + i * 0.12, 0.2, 1.5)); [196, 261.6, 329.6].forEach(f => pad(V.out, f, t, 2.4, 0.07, 0.5)); nz(V.out, t + 0.1, 0.9, 0.03, 'highpass', 6500, 0, 0.7, 0.25); },
     victory(V) { const t = V.t; [523.25, 659.25, 783.99, 1046.5, 1318.5, 1568].forEach((f, i) => bell(V.out, f, t + i * 0.15, 0.17, 1.6)); [262, 330, 392, 523].forEach(f => pad(V.out, f, t + 0.1, 3.4, 0.07, 1.0)); },
   };
-  const WET = { death: 0.55, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
-  const PRIORITY = { death: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
+  const WET = { death: 0.55, revive: 0.5, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
+  const PRIORITY = { death: 1, revive: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
   const MINGAP = { step: 0.07, sprint: 0.12, struggle: 0.12, ui_hover: 0.05, bite: 0.06, wasp_buzz: 0.5, ant_hiss: 0.3, splash: 0.12, drink: 0.2, eat: 0.2, spin: 0.15 };
-  const NO_SPACE = { ui_click: 1, ui_hover: 1, ui_back: 1, unlock: 1, levelup: 1, molt_start: 1, molt_end: 1, death: 1, victory: 1, egg: 1, courtship: 1, danger: 1, rest: 1, thunder: 1 };
+  const NO_SPACE = { ui_click: 1, ui_hover: 1, ui_back: 1, unlock: 1, levelup: 1, molt_start: 1, molt_end: 1, death: 1, revive: 1, victory: 1, egg: 1, courtship: 1, danger: 1, rest: 1, thunder: 1 };
 
   function playSfx(name, o) {
     if (!ctx || !A.ready) return false;

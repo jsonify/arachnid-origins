@@ -274,7 +274,7 @@
     diet: ['springtail', 'mite', 'midge'], habitat: ['litter'],
     value: { hunger: 0, growth: 0 }, danger: 0, color: '#c88a3a', color2: '#5a3a1a',
     fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Clustering helps tiny spiderlings hold on to moisture, and many eyes make a better lookout: when one senses danger the whole cluster reacts. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
-    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. They drift away as you grow.',
+    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. If you would die, a sibling gives its life to bring you back: one sibling, one revive. They drift away as you grow.',
   });
   def({
     id: 'mate', name: 'Suitor', latin: 'Araneus diadematus (adult male)', role: 'spider', tier: 4, spider: true,
@@ -1394,7 +1394,7 @@
       li: -1, cell: 0, blocked: 0, accDt: 0, upd: 0, idleWhy: '', chaseT: 0, lsx: 0, lsy: 0, hitDone: false, curlT: 0,
       ax: 0, ay: 0, bx: 0, by: 0, trailDir: 1, trailWait: 0, avx: 0, avy: 0, avT: 0, grp: 0, noSci: false, awareT: 0, voiceT: 0, struggleSfx: 0,
       lockX: 0, lockY: 0, lockT: 0, strikeR: 0, shadowA: 0, shadowS: 1, skyA: 0, skyS: 1, phaseT: 0, hitRes: 0, dist: 0, ang2: 0, gatherT: 0, gx: 0, gy: 0,
-      disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0,
+      disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0, sac: 0, sacT: 0,
     };
   }
   function create(k, x, y, o) {
@@ -1414,7 +1414,7 @@
     c.alt = c.flying ? 10 + rnd() * 8 : 0; c.altT = c.alt; c.wasFlying = false;
     c.blocked = 0; c.accDt = 0; c.upd = -1; c.idleWhy = ''; c.chaseT = 0; c.hitDone = false; c.curlT = 0;
     c.trailDir = 1; c.trailWait = 0; c.avx = 0; c.avy = 0; c.avT = 0; c.grp = 0; c.noSci = false; c.awareT = 0; c.voiceT = rnd() * 2; c.struggleSfx = 0;
-    c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false;
+    c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false; c.sac = 0; c.sacT = 0;
     c.spawnStage = S.stage; c.eatT = 0; c.rainWait = 0; c.flapT = 0; c.dx = 0; c.dy = 0; c.ax = x; c.ay = y; c.bx = x; c.by = y;
     if (o) {
       if (o.state) c.state = o.state;
@@ -1456,7 +1456,7 @@
     if (!silent) c.flying = c.wasFlying;
   }
   function kill(c, by, src) {
-    if (!c || c.dead || c.k.unique) return false;
+    if (!c || c.dead || c.k.unique || (c.sac && by !== 'sacrifice')) return false;
     const k = c.k, P = S.P;
     const edible = by === 'player' && P && canEat(pRad(), c);
     c.dead = true; c.hp = 0; needCompact = true;
@@ -1474,7 +1474,7 @@
   }
   function hurt(c, dmg, by, src) {
     if (c.dead || dmg <= 0) return false;
-    if (c.k.unique) return false;
+    if (c.k.unique || c.sac) return false;
     c.hp -= dmg; c.flash = 0.25; c.hitT = 3.5;
     if (c.hp <= 0) return kill(c, by, src);
     if (c.state === 'idle') { c.state = 'wander'; c.t = 0.2; c.idleWhy = ''; }
@@ -1986,13 +1986,73 @@
     if (P && !P.dead && S.playing) {
       const r = HUDDLE_R * (0.6 + P.radius / 14), r2 = r * r;
       for (let i = 0; i < list.length && n < HUDDLE_MAX; i++) {
-        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.state === 'flee') continue;
+        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac || c.state === 'flee') continue;
         const dx = c.x - P.x, dy = c.y - P.y; if (dx * dx + dy * dy < r2) n++;
       }
     }
     S.huddle = n;
   }
+  // ---- SACRIFICE: when a blow would kill the player, player.js asks for a sibling (claimSibling). That sibling runs in, settles on the
+  //      player and glows (SAC_GIVE s), then gives its life: it vanishes in a burst of light, hunters nearby are startled off, and
+  //      `kin:sacrifice` tells player.js to bring the spider back. One sibling per revive. While claimed (c.sac): 1 = running in,
+  //      2 = giving. A claimed sibling is hidden from hunters and can't be hurt, so the revive always completes.
+  const SAC_SPEED = 320, SAC_RUN_MAX = 2.2, SAC_GIVE = 0.8, SAC_STARTLE_R = 300;
+  // siblings still with the player: alive, not drifting away, not already giving their life
+  function siblingCount() {
+    let n = 0;
+    for (let i = 0; i < list.length; i++) { const c = list[i]; if (!c.dead && c.kind === 'kin' && !c.disperse && !c.sac) n++; }
+    return n;
+  }
+  function claimSibling(x, y) {
+    let best = null, bd = 1e18;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac) continue;
+      const dx = c.x - x, dy = c.y - y, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = c; }
+    }
+    if (!best) return null;
+    best.sac = 1; best.sacT = 0; best.hidden = true; best.alertT = 0; best.gatherT = 0; best.target = null;
+    return best;
+  }
+  // the burst of light startles hunters close by: they back off for a few seconds so the revived spider can get away
+  function startle(x, y, r) {
+    const r2 = r * r; let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i]; if (c.dead || c.k.ai !== 'hunter' || c.state === 'stuck') continue;
+      const dx = c.x - x, dy = c.y - y; if (dx * dx + dy * dy > r2) continue;
+      fleeFrom(c, x, y, 2.4 + rnd() * 1.2); c.alertT = 0.6; c.alertCol = '#ffd24a'; c.awareT = 0; c.cool2 = 4 + rnd() * 2; n++;
+    }
+    return n;
+  }
+  function sacrificeKin(c, dt) {
+    const P = S.P;
+    if (!P) { c.sac = 0; c.hidden = false; return; }   // no player to give to (scene changed): back to being a normal sibling
+    c.sacT += dt; c.alertT = 0; c.state = 'wander'; c.hidden = true;
+    // it hovers at its own spot beside the spider (so the glow shows on screen rather than under the spider's body)
+    const gx = P.x + cos(c.seed * TAU) * P.radius * 1.3, gy = P.y + sin(c.seed * TAU) * P.radius * 1.3;
+    const dx = gx - c.x, dy = gy - c.y, d = hypot(dx, dy);
+    if (c.sac === 1) {
+      if (d <= c.radius + 2 || c.sacT > SAC_RUN_MAX) {
+        c.sac = 2; c.sacT = 0; startle(P.x, P.y, SAC_STARTLE_R);
+        emitSfx('rest', c.x, c.y, 0.8);
+      } else { steer(c, atan2(dy, dx), SAC_SPEED, dt, 14); integrate(c, dt); return; }
+    }
+    // giving: settle onto the player and glow brighter until the gift lands
+    const e = min(1, dt * 7); c.x += dx * e; c.y += dy * e; c.vx = c.vy = 0; faceTo(c, P.x, P.y, 6, dt);
+    if (c.sacT >= SAC_GIVE) {
+      const x = P.x, y = P.y;
+      addFx('revive', x, y, P.radius * 7, 1.2);
+      c.sac = 3; removeQuiet(c);
+      Game.emit('kin:sacrifice', { creature: c, x, y, left: siblingCount() });
+    }
+  }
+  function drawSacGlow(ctx, c) {
+    const g = c.sac === 2 ? 0.45 + 0.55 * clamp(c.sacT / SAC_GIVE, 0, 1) : 0.3 + min(0.15, c.sacT * 0.3), r = c.radius * (4 + g * 6);
+    const grd = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
+    grd.addColorStop(0, 'rgba(255,240,190,' + (0.85 * g) + ')'); grd.addColorStop(0.4, 'rgba(255,205,110,' + (0.4 * g) + ')'); grd.addColorStop(1, 'rgba(255,170,80,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, TAU); ctx.fill(); ctx.restore();
+  }
   function thinkKin(c, dt) {
+    if (c.sac) { sacrificeKin(c, dt); return; }
     const k = c.k, P = S.P, alive = !!(P && !P.dead);
     c.senseT -= dt; c.gatherT -= dt;
     const pr = P ? P.radius : 5;
@@ -2346,6 +2406,7 @@
   }
   function ceil(v) { return Math.ceil(v); }
 
+  const KIN_START = 5;
   function spawnKin(n) {
     for (let i = 0; i < n; i++) {
       const a = rnd() * TAU, r = 22 + rnd() * 50;
@@ -2380,7 +2441,7 @@
       }
     };
     ensure('springtail', 16, 7); ensure('mite', 10, 4); ensure('midge', 8, 3);
-    spawnKin(5);
+    spawnKin(KIN_START);
   }
 
   // ================================================================= player-facing API
@@ -2548,7 +2609,7 @@
   function updateKinCount() {
     const wanted = [5, 4, 3, 1, 0][min(4, S.stage)];
     let n = 0, far = null, fd = -1;
-    for (let i = 0; i < list.length; i++) { const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse) continue; n++; const d = hypot(c.x - S.px, c.y - S.py) + rnd() * 30; if (d > fd) { fd = d; far = c; } }
+    for (let i = 0; i < list.length; i++) { const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac) continue; n++; const d = hypot(c.x - S.px, c.y - S.py) + rnd() * 30; if (d > fd) { fd = d; far = c; } }
     if (n > wanted && far) { far.disperse = true; far.wa = rnd() * TAU; }
   }
 
@@ -2558,6 +2619,9 @@
     list, KINDS, corpses, visibleKinds, mate: null,
     alarms: S.alarms,                       // sibling lookout warnings (HUD arrows)
     get huddle() { return S.huddle; },      // siblings huddled with the player right now (0..HUDDLE_MAX)
+    get siblings() { return siblingCount(); },   // siblings still with the player = revives left (player.js)
+    siblingsMax: KIN_START,                 // how many hatch with you
+    claimSibling, startle,                  // claimSibling(x,y) -> the sibling that will give its life (or null); startle(x,y,r) scares hunters off
     kindList() { return KIND_LIST.slice(); },
     spawn, attackAt, nearest, inRadius, spawnMate, trap,
     release(c) { if (c && !c.dead && c.state === 'stuck') { releaseWeb(c, false, false); c.state = 'flee'; c.t = 1.5; c.struggle = 0; c.tx = c.x; c.ty = c.y; c.dashT = 0; c.t2 = 0; } },
@@ -2657,6 +2721,7 @@
       const pad = c.radius * k.ext * 1.15 + 14;
       if (k.ai === 'mate') { if (cam.inView(c.x, c.y, 200)) drawMateAura(ctx, c, T, zoom); }
       if (c.x < v.x0 - pad || c.x > v.x1 + pad || c.y < v.y0 - pad || c.y > v.y1 + pad) continue;
+      if (c.sac) continue;   // drawn by drawHigh, above the player
       drawCreature(ctx, c, T, zoom, sci);
     }
   }
@@ -2664,7 +2729,9 @@
     const cam = Game.camera, v = cam.view, T = Game.time.real, zoom = cam.zoom, sci = !!Game.settings.science;
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
-      if (c.dead || !c.flying || c.k.ai === 'bird') continue;
+      if (c.dead || c.k.ai === 'bird') continue;
+      if (c.sac) { if (cam.inView(c.x, c.y, 80)) { drawSacGlow(ctx, c); drawCreature(ctx, c, T, zoom, sci); } continue; }
+      if (!c.flying) continue;
       const pad = c.radius * c.k.ext * 1.15 + 14 + c.alt;
       if (c.x < v.x0 - pad || c.x > v.x1 + pad || c.y < v.y0 - pad || c.y > v.y1 + pad) continue;
       drawCreature(ctx, c, T, zoom, sci);
@@ -2684,6 +2751,12 @@
     if (f.kind === 'puff') {
       ctx.fillStyle = 'rgba(190,170,130,' + (0.35 * (1 - q)) + ')';
       for (let i = 0; i < 7; i++) { const a = i * 0.9 + 0.3, r = f.r * (0.2 + q * 0.9); ctx.beginPath(); ctx.arc(f.x + cos(a) * r, f.y + sin(a) * r, f.r * (0.28 - q * 0.12), 0, TAU); ctx.fill(); }
+    } else if (f.kind === 'revive') {
+      const e = 1 - (1 - q) * (1 - q);
+      ctx.fillStyle = 'rgba(255,240,200,' + (0.4 * (1 - q)) + ')'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.12 + e * 0.5), 0, TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,224,150,' + (0.75 * (1 - q)) + ')'; ctx.lineWidth = 2.5 / zoom; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.2 + e * 0.85), 0, TAU); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,236,170,' + (0.9 * (1 - q)) + ')';
+      for (let i = 0; i < 9; i++) { const a = i * TAU / 9 + 0.4, rr = f.r * (0.15 + e * 0.8); ctx.beginPath(); ctx.arc(f.x + cos(a) * rr, f.y + sin(a) * rr - q * f.r * 0.5, f.r * 0.05 * (1 - q * 0.6), 0, TAU); ctx.fill(); }
     } else {
       ctx.strokeStyle = 'rgba(255,90,60,' + (0.6 * (1 - q)) + ')'; ctx.lineWidth = 2 / zoom; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.6 + q * 0.7), 0, TAU); ctx.stroke();
       ctx.fillStyle = 'rgba(190,150,110,' + (0.3 * (1 - q)) + ')'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.5 + q * 0.5), 0, TAU); ctx.fill();

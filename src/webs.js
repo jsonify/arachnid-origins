@@ -165,7 +165,7 @@
     canSpin(type) {
       type = type || webs.selected;
       const P = Game.player;
-      if (!type || !TYPE[type] || !P || P.dead || P.molting) return false;
+      if (!type || !TYPE[type] || !P || P.dead || P.reviving || P.molting) return false;
       if (!webs.unlocked(type)) return false;
       return (P.silk || 0) >= webs.cost(type);
     },
@@ -176,7 +176,7 @@
       if (!type || !TYPE[type] || !P) return null;
       if (webs._cool > 0) return null;
       if (!webs.unlocked(type)) { fail('locked'); return null; }
-      if (P.dead || P.molting) return null;
+      if (P.dead || P.reviving || P.molting) return null;
       if ((P.silk || 0) < webs.cost(type)) { fail('silk'); return null; }
       const ang = typeof P.angle === 'number' ? P.angle : 0;
       const w = newWeb(type, P.x, P.y, ang);
@@ -275,7 +275,7 @@
       ensureSelection();
 
       // ---- input
-      const canAct = P && !P.dead && !P.molting && Game.state.scene === 'playing' && webs._gate <= 0 && Game.input;
+      const canAct = P && !P.dead && !P.reviving && !P.molting && Game.state.scene === 'playing' && webs._gate <= 0 && Game.input;
       if (canAct) {
         for (let k = 1; k <= 4; k++) {
           if (Game.input.pressed('web' + k)) {
