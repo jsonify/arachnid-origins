@@ -37,7 +37,8 @@ log('mate state', JSON.stringify(P().mate), 'scene', G.state.scene);
 ok(G.state.scene === 'victory', 'victory scene reached');
 H.shot('play_victory');
 // death path
-G.newGame(); H.run(4); P().damage(9999, 'test'); H.run(6);
+G.newGame(); H.run(4); G.creatures.list.slice().forEach(c => { if (c.kind === 'kin') G.creatures.kill(c, 'other'); });   // no siblings left to revive it (see test_revive.js)
+P().damage(9999, 'test'); H.run(6);
 ok(G.state.scene === 'gameover', 'gameover on death');
 H.shot('play_gameover');
 // starvation unattended

@@ -14,6 +14,13 @@
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle
+    // Game modes, chosen on the title screen (New Game) and remembered in Game.settings.mode. The first one is the default.
+    //   brood:    siblings give their lives to revive you (1 sibling = 1 revive)
+    //   survival: one life; siblings still warn you and huddle, but cannot save you
+    MODES: [
+      { id: 'brood',    name: 'Brood',    tag: 'Default', blurb: 'Your siblings have your back. If you would die, a sibling gives its life to bring you back: one sibling, one revive. They also warn you of predators and huddle in while you rest.', note: 'Up to 5 revives, fewer as siblings drift away.' },
+      { id: 'survival', name: 'Survival', tag: 'Hard',    blurb: 'One life, no second chances. Your siblings still warn you of predators and huddle in while you rest, but they cannot save you. When you die, the journey is over.', note: 'No revives.' },
+    ],
     SPAWN: { x: 320, y: 1800 }, // hatch point (inside Leaf Litter)
     ZONES: [
       { id: 'litter', name: 'Leaf Litter',  x0: 0,    x1: 2400, y0: 0, y1: 3600, color: '#5a4327' },
@@ -48,7 +55,7 @@
     // Every sfx name that may be emitted via Game.emit('sfx', {name, x, y, vol}).
     SFX: ['step', 'sprint', 'bite', 'eat', 'drink', 'spin', 'web_place', 'web_snap', 'trap', 'struggle',
           'hurt', 'death', 'molt_start', 'molt_end', 'levelup', 'ui_click', 'ui_hover', 'ui_back', 'unlock',
-          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory'],
+          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory', 'revive'],
     KEYMAP: {
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
@@ -127,7 +134,9 @@
     get(k, d) { try { const v = root.localStorage && root.localStorage.getItem('ao_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return k in memStore ? memStore[k] : d; } },
     set(k, v) { try { root.localStorage.setItem('ao_' + k, JSON.stringify(v)); } catch (e) { memStore[k] = v; } },
   };
-  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true }, Game.store.get('settings', {}));
+  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true, mode: 'brood' }, Game.store.get('settings', {}));
+  if (!C.MODES.some(m => m.id === Game.settings.mode)) Game.settings.mode = C.MODES[0].id;   // unknown / stale saved value
+  Game.modeInfo = (id) => C.MODES.find(m => m.id === id) || C.MODES[0];
   Game.saveSettings = () => Game.store.set('settings', Game.settings);
 
   // --------------------------------------------------------------- shared state
@@ -138,6 +147,7 @@
     danger: 0,        // 0..1 nearest-predator threat; written by creatures, read by audio/ui
     stats: {},        // free-form counters (eaten, webs, moltCount, daysSurvived...) written by anyone via Game.stat()
     victory: false,
+    mode: 'brood',    // brood|survival: set by Game.newGame(mode)
   };
   Game.stat = (k, add) => { const s = Game.state.stats; s[k] = (s[k] || 0) + (add === undefined ? 1 : add); return s[k]; };
 
@@ -233,7 +243,9 @@
   }
 
   // ------------------------------------------------------------- game control
-  Game.newGame = () => {
+  // mode: a Game.C.MODES id; omitted = the one last chosen (Game.settings.mode, saved by the title screen)
+  Game.newGame = (mode) => {
+    Game.state.mode = Game.modeInfo(mode || Game.settings.mode).id;
     Game.state.victory = false; Game.state.danger = 0; Game.state.stats = {};
     Game.time.t = 0;
     modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });

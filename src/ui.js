@@ -490,6 +490,10 @@
     const back = { x: W / 2 - 110, y: y + h - 78, w: 220, h: 44 };
     return { x, y, w, h, rows, back };
   }
+  function modeLayout() {
+    const b = { x: (W - 840) / 2, y: 110, w: 840, h: 500 }, n = C.MODES.length, cw = 372, ch = 300, gap = 36, x0 = b.x + (b.w - (n * cw + (n - 1) * gap)) / 2;
+    return { b, cards: C.MODES.map((m, i) => ({ x: x0 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
+  }
   const subBackRect = (py, ph) => ({ x: W / 2 - 110, y: py + ph - 62, w: 220, h: 44 });
   const confirmRects = () => [{ x: W / 2 - 250, y: 392, w: 240, h: 48 }, { x: W / 2 + 10, y: 392, w: 240, h: 48 }];
   const endRects = (y) => [{ x: W / 2 - 250, y, w: 240, h: 52 }, { x: W / 2 + 10, y, w: 240, h: 52 }];
@@ -529,6 +533,12 @@
       ui.stageCard = { stage: d.stage, t0: real(), dur: 11 };
     });
     Game.on('player:died', (d) => { ui.death.cause = d && d.cause; });
+    Game.on('player:downed', () => { pushBanner({ title: 'You are down', sub: 'A sibling rushes to your side...', kind: 'kin', dur: 2.2 }); });
+    Game.on('player:revived', (d) => {
+      const n = (d && d.left) || 0;
+      ui.banners = ui.banners.filter(b => b.kind !== 'kin');   // replaces "You are down" at once instead of queueing behind it
+      pushBanner({ title: 'A sibling gave its life', sub: n > 0 ? n + (n === 1 ? ' sibling' : ' siblings') + ' left to watch over you' : 'No siblings are left to save you again', kind: 'kin', dur: 4.5 });
+    });
     Game.on('molt:start', (d) => { ui.moltInfo = d || null; });
     Game.addScreenDrawer(Game.LAYER.HUD, drawHUDLayer);
     Game.addScreenDrawer(Game.LAYER.MENU, drawMenuLayer);
@@ -600,7 +610,7 @@
     if (act < 0) return;
     sfx('ui_click');
     const id = TITLE_ITEMS[act].id;
-    if (id === 'new') Game.newGame();
+    if (id === 'new') { ui.sub = 'mode'; ui.idx.mode = Math.max(0, C.MODES.findIndex(m => m.id === Game.settings.mode)); }   // choose a mode first; the last choice is highlighted
     else if (id === 'bestiary') { ui.codex.tab = 0; Game.setScene('codex'); }
     else { ui.sub = id; ui.idx[id] = 0; }
   }
@@ -628,9 +638,30 @@
     }
     if (nav.back || (owner === 'paused' && nav.pause)) { sfx('ui_back'); ui.sub = null; return; }
     if (sub === 'settings') return updateSettings(nav);
+    if (sub === 'mode') return updateMode(nav);
     // howto / credits: a single Back button
     const pl = subPanelBox(sub), br = subBackRect(pl.y, pl.h);
     if (nav.confirm || (nav.click && inRect(nav.mx, nav.my, br))) { sfx('ui_back'); ui.sub = null; }
+  }
+
+  // New Game -> pick a mode (cards side by side; arrows / mouse to choose, Enter / click to begin)
+  function startGame(mode) {
+    ui.sub = null;
+    if (Game.settings.mode !== mode) setSetting('mode', mode);   // remembered for next time and for Try Again
+    Game.newGame(mode);
+  }
+  function updateMode(nav) {
+    const L = modeLayout(), n = L.cards.length, key = 'mode';
+    if (ui.idx[key] == null) ui.idx[key] = 0;
+    let i = ui.idx[key];
+    if (nav.left || nav.up) i = setIdx(key, i - 1, n);
+    if (nav.right || nav.down) i = setIdx(key, i + 1, n);
+    if (nav.moved) for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k]) && k !== i) i = setIdx(key, k, n);
+    if (nav.click) {
+      if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = null; return; }
+      for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; sfx('ui_click'); startGame(C.MODES[k].id); return; }
+    }
+    if (nav.confirm) { sfx('ui_click'); startGame(C.MODES[i].id); }
   }
 
   function setSetting(key, v) {
@@ -762,7 +793,7 @@
 
   // ------------------------------------------------- interaction prompts
   function computePrompt() {
-    const p = P(), w = Game.world; if (!p || p.dead || p.molting || !w) return null;
+    const p = P(), w = Game.world; if (!p || p.dead || p.reviving || p.molting || !w) return null;
     const pr = p.radius || 8;
     // adult goals first
     const cr = Game.creatures;
@@ -993,7 +1024,7 @@
     const t = real(), pulse = 0.5 + 0.5 * Math.sin(t * 5);
     let a = 0, rgb = '210,30,20';
     if (ui.flash > 0) a = Math.max(a, ui.flash * 0.6);
-    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
+    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead && !p.reviving) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
     const danger = (Game.state && Game.state.danger) || 0;
     if (danger > 0.35) a = Math.max(a, (danger - 0.3) * 0.22 * (0.7 + 0.3 * pulse));
     if (a <= 0.01) return;
@@ -1002,6 +1033,8 @@
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
 
+  // height of the top-left stats panel (Brood mode has the Siblings row); the key guide sits just below it
+  const statsH = () => Game.state.mode === 'survival' ? 198 : 222;
   function hudKeyGuide(ctx) {
     const aim = !!Game.settings.mouseAim;
     const rows = [
@@ -1012,7 +1045,7 @@
       [['1', '2', '3', '4'], 'Select web'], [['E'], 'Interact'], [['R'], 'Rest'],
       [['B', 'M', 'F'], 'Codex / Map / Science'], [['H', 'Z', 'Esc'], 'Guide / Zoom / Pause'],
     ].filter(r => r[1]);
-    const x = 16, y = 226, w = 272, rh = 21, h = 32 + rows.length * rh;
+    const x = 16, y = 16 + statsH() + 12, w = 272, rh = 20, h = 32 + rows.length * rh;
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     spaced(ctx, 'KEY GUIDE', x + 16, y + 21, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
     rows.forEach((r, i) => {
@@ -1023,7 +1056,7 @@
   }
 
   function hudStats(ctx, p) {
-    const x = 16, y = 16, w = 272, h = 198, t = real();
+    const x = 16, y = 16, w = 272, h = statsH(), t = real();
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     const st = p.stage || 0, last = st >= C.STAGES.length - 1;
     txt(ctx, stageName(st), x + 16, y + 29, { size: 19, weight: 700, font: SERIF, color: COL.amberHi });
@@ -1049,6 +1082,18 @@
       icon(ctx, m[0], x + 28, ry + 6, 17 * (1 + 0.16 * pulse), low ? U.mixColor('#ffb0a0', '#ff4a3a', pulse) : m[3]);
       bar(ctx, x + 48, ry, w - 48 - 56, 12, f, col, { border: low ? 'rgba(255,90,70,' + (0.5 + 0.5 * pulse) + ')' : null });
       txt(ctx, String(m[4]) + (i === 4 ? '/' + Math.round(p.maxSilk || 0) : ''), x + w - 16, ry + 6.5, { size: 12, weight: 600, color: low ? '#ff9a8a' : COL.text2, align: 'right', base: 'middle' });
+    }
+    // siblings: each one still with you is a revive (Brood mode only)
+    if (Game.state.mode !== 'survival') {
+      const cr = Game.creatures, left = (cr && cr.siblings) | 0, slots = (cr && cr.siblingsMax) || 5, sy = y + 202;
+      ctx.fillStyle = COL.lineSoft; ctx.fillRect(x + 16, sy - 9, w - 32, 1);
+      txt(ctx, 'Siblings', x + 16, sy + 8, { size: 12, weight: 600, color: COL.text3, base: 'middle' });
+      for (let i = 0; i < slots; i++) {
+        const sx = x + 90 + i * 24;
+        if (i < left) drawKind(ctx, 'kin', sx, sy + 8, 18);
+        else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy + 8, 5.5, 0, 7); ctx.stroke(); }
+      }
+      txt(ctx, left + (left === 1 ? ' revive' : ' revives'), x + w - 16, sy + 8, { size: 12, weight: 600, color: left > 0 ? COL.amberHi : COL.text3, align: 'right', base: 'middle' });
     }
     // status chips
     let cx = x, cy = y + h + 8;
@@ -1420,6 +1465,7 @@
   // ------------------------------------------------------------ sub panels
   function subPanelBox(sub) {
     if (sub === 'settings') return settingsLayout();
+    if (sub === 'mode') return modeLayout().b;
     if (sub === 'howto') return { x: (W - 900) / 2, y: 46, w: 900, h: 628 };
     return { x: (W - 680) / 2, y: 100, w: 680, h: 520 };
   }
@@ -1429,13 +1475,30 @@
     if (sub === 'confirmQuit') return drawConfirmQuit(ctx);
     const b = subPanelBox(sub);
     panel(ctx, b.x, b.y, b.w, b.h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
-    const title = { settings: 'Settings', howto: 'How to Play', credits: 'Credits' }[sub];
+    const title = { settings: 'Settings', mode: 'Choose your journey', howto: 'How to Play', credits: 'Credits' }[sub];
     txt(ctx, title, W / 2, b.y + 48, { size: 30, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.35)'; ctx.beginPath(); ctx.moveTo(b.x + 60, b.y + 62); ctx.lineTo(b.x + b.w - 60, b.y + 62); ctx.stroke();
     if (sub === 'settings') drawSettings(ctx, b);
+    else if (sub === 'mode') drawMode(ctx, b);
     else if (sub === 'howto') drawHowTo(ctx, b);
     else drawCredits(ctx, b);
-    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', true, { size: 17 });
+    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode', { size: 17 });
+  }
+
+  function drawMode(ctx, b) {
+    const L = modeLayout(), foc = ui.idx.mode || 0;
+    L.cards.forEach((r, i) => {
+      const m = C.MODES[i], f = i === foc, hard = m.id === 'survival', col = hard ? COL.bad : COL.amber;
+      panel(ctx, r.x, r.y, r.w, r.h, { fill: f ? 'rgba(34,24,14,0.96)' : 'rgba(18,13,9,0.8)', border: f ? col : COL.line, bw: f ? 2 : 1, r: 14 });
+      txt(ctx, m.name, r.x + 24, r.y + 46, { size: 30, font: SERIF, weight: 700, color: f ? COL.amberHi : COL.text });
+      txt(ctx, m.tag.toUpperCase(), r.x + r.w - 24, r.y + 42, { size: 11, weight: 700, color: col, align: 'right' });
+      // one life, plus a sibling icon per revive in Brood mode
+      icon(ctx, 'heart', r.x + 38, r.y + 100, 26, COL.hp);
+      if (!hard) { txt(ctx, '+', r.x + 66, r.y + 101, { size: 16, weight: 700, color: COL.text3, align: 'center', base: 'middle' }); for (let k = 0; k < 5; k++) drawKind(ctx, 'kin', r.x + 94 + k * 32, r.y + 100, 24); }
+      para(ctx, m.blurb, r.x + 24, r.y + 134, r.w - 48, { size: 15, lh: 22, color: COL.text });
+      txt(ctx, m.note, r.x + 24, r.y + r.h - 26, { size: 13, weight: 600, color: col });
+    });
+    txt(ctx, 'Left / Right to choose  \u00b7  Enter to begin  \u00b7  Esc to go back  \u00b7  your choice is remembered', W / 2, b.y + b.h - 86, { size: 12, color: COL.text3, align: 'center' });
   }
 
   function drawSettings(ctx, L) {
@@ -1512,7 +1575,7 @@
     if (ui.sub) { drawSub(ctx); ctx.restore(); return; }
     txt(ctx, 'Paused', W / 2, 172, { size: 54, font: SERIF, weight: 700, color: COL.amberHi, align: 'center', shadow: true });
     const p = P(), E = Game.edu;
-    const info = (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
+    const info = Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
     txt(ctx, info, W / 2, 208, { size: 15, color: COL.text2, align: 'center', font: SERIF, italic: true });
     ctx.strokeStyle = 'rgba(255,205,130,0.4)'; ctx.beginPath(); ctx.moveTo(W / 2 - 120, 226); ctx.lineTo(W / 2 + 120, 226); ctx.stroke();
     const rects = pauseRects(), foc = ui.idx.pause || 0;
@@ -1959,7 +2022,7 @@
     panel(ctx, bx, by, bw, L.ph, { fill: 'rgba(16,10,8,0.93)', border: 'rgba(229,96,77,0.4)', r: 18 });
     spaced(ctx, 'YOUR JOURNEY ENDS', W / 2, by + 44, 6, { size: 13, weight: 700, color: '#c98578', align: 'center' });
     txt(ctx, d.title, W / 2, by + 104, { size: 50, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center', shadow: true });
-    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time), W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time) + '  \u00b7  ' + Game.modeInfo(Game.state.mode).name + ' mode', W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
     ctx.fillStyle = 'rgba(229,96,77,0.35)'; ctx.fillRect(bx + 80, by + 152, bw - 160, 1);
     para(ctx, d.flavor, bx + 70, by + L.flavorY, bw - 140, { size: 17, lh: 25, italic: true, font: SERIF, color: COL.text, align: 'center', maxLines: 3 });
     const sy = by + L.boxY;

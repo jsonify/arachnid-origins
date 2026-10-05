@@ -109,6 +109,9 @@
   F('courtship', 'behavior', 'Courtship Signals',
     'Males of many species court with vibrations, drumming or dances so that the female recognizes a mate rather than a meal. Females are often larger than males, so a clear signal matters.',
     'Court a mate.', { event: 'courtship:done' });
+  F('brood_sacrifice', 'behavior', 'Sacrifice for the Brood',
+    'In this game a sibling gives its life to revive you, but real spiderlings do not do that for one another: many species compete, and some eat their own siblings. Self-sacrifice does exist, though, and it comes from mothers. A Stegodyphus velvet spider mother feeds her young, then lets them eat her body, a last meal known as matriphagy.',
+    'Be revived by a sibling.', { event: 'player:revived' });
   F('pheromones', 'behavior', 'Following Chemical Trails',
     'Female spiders leave pheromones on their silk and the ground. Males detect them with chemoreceptors on their legs and pedipalps, a scent-by-touch way of finding a mate.',
     'Find a mate.', { event: 'mate:found' });
@@ -392,7 +395,7 @@
   // ---------------------------------------------------------------------- module
   const WIRED = ['stage:change', 'molt:start', 'molt:choose', 'molt:end', 'player:damaged', 'player:died', 'player:ate', 'player:drank',
     'player:rest', 'creature:seen', 'creature:killed', 'creature:attack', 'web:spun', 'web:trapped', 'web:destroyed', 'zone:enter',
-    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory'];
+    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived'];
 
   const edu = {
     priority: 50,
@@ -630,6 +633,7 @@
       if (st === 4 && p.mate && p.mate.found && !p.mate.courted) return 'Press E next to the mate to court. You need hunger above 35%.';
       if (st === 4 && p.mate && p.mate.courted && !p.mate.laid) return 'Find a hidden egg site (a hollow or shelter) and press E to lay your egg sac.';
       if (Game.world && Game.world.isNight && Game.world.isNight() && t > 20) { return 'Night: darker, and some predators are more active. Vibration Sense shows nearby creatures.'; }
+      if (t < 120 && cr && cr.siblings > 0 && Game.state.mode !== 'survival') return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
       if (t < 90 && !f.hidden) return 'Predators track movement. Press R while hidden to rest and recover.';
       if (t < 150) return 'Press B to open your Codex, and F for Science Mode.';
       return '';

@@ -112,6 +112,8 @@ CASES.smoke = function () {
   }
 };
 function C() { return Game.C; }
+// siblings are extra lives (tools/test_revive.js covers that): the cases below that end in death are about a spider with none left
+function noSiblings() { Game.creatures.list.slice().forEach(c => { if (c.kind === 'kin') Game.creatures.kill(c, 'other'); }); }
 
 
 CASES.numeric = function () {
@@ -121,7 +123,7 @@ CASES.numeric = function () {
   T.assert(P.damage(5, 'wasp') === 0, 'no damage during spawn invuln');
   T.run(3.2); T.assert(!P.hatching, 'hatch done');
   // survive without help (hatchling), then die
-  P.invuln = 0; let t = 0, deadAt = -1, hp0 = P.hp;
+  noSiblings(); P.invuln = 0; let t = 0, deadAt = -1, hp0 = P.hp;
   const log = [];
   while (t < 400 && !P.dead) { T.run(1); t++; if (t % 30 === 0) log.push(t + 's hp=' + P.hp.toFixed(1) + ' hu=' + P.hunger.toFixed(0) + ' hy=' + P.hydration.toFixed(0)); }
   console.log('  ' + log.join(' | ')); console.log('  died at', t, 's cause', P.deathCause);
@@ -261,7 +263,7 @@ CASES.molt = function () {
   T.assert(Math.abs(Game.camera.targetZoom - C().STAGES[2].zoom) < 1e-6, 'camera targetZoom');
 };
 CASES.death = function () {
-  const P = Game.player; P.debugSetStage(2); P.invuln = 0; T.run(0.5);
+  const P = Game.player; P.debugSetStage(2); P.invuln = 0; noSiblings(); T.run(0.5);
   let died = null; Game.on('player:died', d => { died = d; });
   P.damage(1000, 'wasp'); T.assert(P.dead && P.deathCause === 'eaten' && died && died.cause === 'eaten', 'died eaten');
   T.run(0.5); T.shotCrop('death_0', 360, 220); T.run(1.0); T.shotCrop('death_1', 360, 220);

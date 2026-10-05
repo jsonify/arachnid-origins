@@ -24,6 +24,10 @@
   const REST_REGEN = 6.0;                       // energy / s while resting (x3 sheltered)
   // Huddling with siblings (Game.creatures.huddle, up to 3 of them close by) while resting: per sibling, recover faster and burn less food and water
   const HUDDLE_ENERGY = 0.15, HUDDLE_HEAL = 0.2, HUDDLE_DRAIN = 0.12;
+  // Sibling revive: a fatal blow downs the spider instead while a sibling is left (Game.creatures.claimSibling). The sibling runs in and gives its
+  // life, and the spider gets up with REVIVE_HP of its health, meters topped up to REVIVE_METER and REVIVE_INVULN s of grace. 1 sibling = 1 revive.
+  const REVIVE_HP = 0.5, REVIVE_METER = 35, REVIVE_INVULN = 4;
+  const REVIVE_MAX = 4;       // longest the spider stays down waiting for the gift (s); the sibling normally arrives well before
 
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
@@ -57,7 +61,7 @@
     hp: 30, maxHp: 30, hunger: 80, hydration: 80, energy: 100, silk: 20, maxSilk: 20,
     growth: 0, growthNeeded: 60, upgrades: {},
     speedMul: 1, biteMul: 1, stealth: 1, damageTaken: 1, senseRadius: 60, drainMul: 1,
-    hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null,
+    hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null, reviving: false, revives: 0,
     stateLabel: 'walking', mate: { found: false, courted: false, laid: false }, mateHint: null,
     // extras (documented in the report)
     interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1, huddled: 0,
@@ -70,6 +74,7 @@
   let hatchT = 0, moltT = 0, courtT = 0, layT = 0, deathT = 0, endT = 0, victoryFired = false, gaitPhase = 0, abAng = 0, prevAng = 0;
   let sfxStepT = 0, trailT = 0, mateRetryT = 0, exhaustedFlag = false, dotBuf = 0, dotSrc = 'damage', hurtSfxT = 0, chooseWait = 0;
   let enterT = 0, exitCd = 0, restToggleCd = 0, noInputT = 0, statT = 0, lastGood = { x: 0, y: 0 };
+  let reviveSib = null, reviveCause = null, reviveLanded = false, reviveGlow = 0;
   let sac = null, exuvia = null, pendingStage = 0, swapped = false, courtMateRef = null, layTarget = null, bodyBob = 0;
   const feet = [];     // per-leg gait state
   const trail = [];    // dragline trail points
@@ -125,7 +130,7 @@
     this.hunger = 80; this.hydration = 80; this.energy = 100;
     this.growth = 0; this.growthNeeded = this.stageInfo.growthNeeded;
     this.hidden = false; this.resting = false; this.moltTimer = 0; this.molting = false; this.moltPhase = 'none';
-    this.dead = false; this.deathCause = null; this.stateLabel = 'walking';
+    this.dead = false; this.deathCause = null; this.reviving = false; this.revives = 0; this.stateLabel = 'walking';
     this.mate = { found: false, courted: false, laid: false }; this.mateHint = null;
     this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false; this.huddled = 0;
     this.invuln = SPAWN_INVULN; this.offers = []; this.soft = 0; this.eggSac = null;
@@ -135,6 +140,7 @@
     sfxStepT = 0; trailT = 0; mateRetryT = 0; exhaustedFlag = false; dotBuf = 0; hurtSfxT = 0; chooseWait = 0;
     enterT = 0; exitCd = 0; restToggleCd = 0; noInputT = 0; statT = 0; swapped = false; courtMateRef = null; layTarget = null; bodyBob = 0;
     exuvia = null; trail.length = 0; parts.length = 0;
+    reviveSib = null; reviveCause = null; reviveLanded = false; reviveGlow = 0;
     sac = { x: this.x, y: this.y, r: this.radius * 3.1, ang: this.angle, t: 0 };
     snapFeet();
     lastGood.x = this.x; lastGood.y = this.y;
@@ -149,6 +155,7 @@
     Game.addDrawer(Game.LAYER.PLAYER, drawAll);
     Game.on('web:spun', () => { spinT = 0.55; });
     Game.on('mate:found', () => { if (P.mate) P.mate.found = true; });
+    Game.on('kin:sacrifice', (d) => { if (P.reviving && d && d.creature === reviveSib) reviveLanded = true; });
   };
 
   // ---- silk ----------------------------------------------------------------------------
@@ -182,7 +189,7 @@
 
   P.damage = function (amount, source) {
     amount = num(amount, 0);
-    if (this.dead || amount <= 0 || this.invuln > 0) return 0;
+    if (this.dead || this.reviving || amount <= 0 || this.invuln > 0) return 0;
     const soft = (this.molting || this.moltTimer > 0) ? 2 : 1;
     const actual = Math.min(this.hp, amount * this.damageTaken * soft);
     this.hp -= actual;
@@ -200,7 +207,7 @@
 
   // damage over time (starvation, rain ...): no flash spam, no i-frames respected for survival drains
   function dot(amount, source, dt) {
-    if (P.dead || amount <= 0) return;
+    if (P.dead || P.reviving || amount <= 0) return;
     if (P.invuln > 0) return;
     const soft = (P.molting || P.moltTimer > 0) ? 2 : 1;
     const a = Math.min(P.hp, amount * P.damageTaken * soft);
@@ -211,7 +218,8 @@
   }
 
   function die(cause) {
-    if (P.dead) return;
+    if (P.dead || P.reviving) return;
+    if (beginRevive(cause)) return;
     P.dead = true; P.deathCause = cause; P.hp = 0; deathT = 0;
     P.resting = false; P.courting = false; P.laying = false; P.stateLabel = 'dead';
     P.vx *= 0.3; P.vy *= 0.3;
@@ -220,6 +228,44 @@
     sfx('death', 1); Game.camera.shake(9);
     stat('deaths');
     for (let i = 0; i < 12; i++) addParticle('spark', P.x, P.y, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, 0.9, 0.8, '#b9a58a', 0);
+  }
+
+  // a sibling is still around: go down instead of dying; reviveUpdate() keeps the spider down until the sibling's gift lands
+  function beginRevive(cause) {
+    const cr = Game.creatures; if (!has(cr, 'claimSibling') || Game.state.mode === 'survival') return false;   // Survival mode: one life
+    let sib = null;
+    try { sib = cr.claimSibling(P.x, P.y); } catch (e) { Game.reportError('player.revive', e); }
+    if (!sib) return false;
+    P.reviving = true; reviveSib = sib; reviveCause = cause; reviveLanded = false; deathT = 0;
+    P.hp = 0; P.invuln = REVIVE_MAX + REVIVE_INVULN;   // nothing can touch a downed spider
+    P.courting = false; P.laying = false; P.stateLabel = 'downed';
+    setResting(false); P.vx *= 0.3; P.vy *= 0.3;
+    if (dotBuf > 0) { Game.emit('player:damaged', { amount: dotBuf, source: dotSrc }); dotBuf = 0; }
+    Game.emit('player:downed', { cause, left: num(cr.siblings, 0) });
+    sfx('hurt', 1); Game.camera.shake(6);
+    for (let i = 0; i < 8; i++) addParticle('spark', P.x, P.y, (Math.random() - 0.5) * 36, (Math.random() - 0.5) * 36, 0.8, 0.7, '#b9a58a', 0);
+    return true;
+  }
+  function reviveUpdate(dt) {
+    deathT += dt;
+    P.vx *= Math.exp(-6 * dt); P.vy *= Math.exp(-6 * dt);
+    moveBy(P.vx * dt, P.vy * dt);
+    curl = Math.min(1.15, curl + dt * 1.1);
+    if (reviveLanded || deathT > REVIVE_MAX) finishRevive();
+  }
+  function finishRevive() {
+    const cr = Game.creatures, cause = reviveCause;
+    P.reviving = false; reviveSib = null; reviveLanded = false;
+    P.hp = Math.max(1, P.maxHp * REVIVE_HP);
+    // top the meters up too, or a spider downed by hunger, thirst or exhaustion would drop straight back down
+    P.hunger = Math.max(P.hunger, REVIVE_METER); P.hydration = Math.max(P.hydration, REVIVE_METER); P.energy = Math.max(P.energy, REVIVE_METER);
+    exhaustedFlag = false; exhaustT = 0; P.exhausted = false;
+    P.invuln = REVIVE_INVULN; P.stateLabel = 'walking';
+    reviveGlow = 1; flash = 0; P.revives++; stat('revives');
+    if (P.stage < 4 && P.growth >= P.growthNeeded && !P.molting) startMolt();
+    Game.emit('player:revived', { cause, left: has(cr, 'claimSibling') ? num(cr.siblings, 0) : 0, total: P.revives });
+    sfx('revive', 1); Game.camera.shake(3);
+    for (let i = 0; i < 18; i++) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 2, P.y + (Math.random() - 0.5) * P.radius * 2, (Math.random() - 0.5) * 30, -10 - Math.random() * 22, 1.0 + Math.random() * 0.8, 0.6 + Math.random() * 0.8, '#ffe6a0', 0);
   }
 
   function setResting(on) {
@@ -245,7 +291,7 @@
   };
 
   function startMolt() {
-    if (P.molting || P.dead || P.stage >= 4) return;
+    if (P.molting || P.dead || P.reviving || P.stage >= 4) return;   // (a molt that came due while downed starts once the spider is up: finishRevive)
     P.molting = true; P.moltPhase = 'choose'; P.offers = P.offerUpgrades(); chooseWait = 0;
     pendingStage = P.stage + 1; swapped = false; moltT = 0;
     setResting(false); P.inShelter = null; P.vx = P.vy = 0; P.stateLabel = 'molting';
@@ -465,7 +511,7 @@
 
   // ---- biting ----------------------------------------------------------------------------------------------------------
   P.bite = function () {
-    if (this.dead || this.molting || this.courting || this.laying || this.hatching || biteCd > 0) return false;
+    if (this.dead || this.reviving || this.molting || this.courting || this.laying || this.hatching || biteCd > 0) return false;
     const cr = Game.creatures, si = this.stageInfo;
     biteCd = Math.max(0.34, 0.58 - 0.05 * this.stage);
     bitePhase = 1;
@@ -639,6 +685,8 @@
 
     if (P.dead) {
       deathUpdate(dt); sp = 0; mScale = 0; P.sprinting = false;
+    } else if (P.reviving) {
+      reviveUpdate(dt); sp = 0; mScale = 0; P.sprinting = false;
     } else if (P.hatching) {
       sp = hatchUpdate(dt); mScale = 0; P.stateLabel = 'walking';
     } else if (P.molting) {
@@ -685,8 +733,8 @@
     meters(dt * mScale, sp > 8, sprint);
     // visual state
     const curlT = (P.resting && sp < 6) ? 1 : 0;
-    if (!P.dead) curl += (curlT - curl) * (1 - Math.exp(-5 * dt));
-    tickGait(dt, P.dead ? 0 : sp);
+    if (!P.dead && !P.reviving) curl += (curlT - curl) * (1 - Math.exp(-5 * dt));
+    tickGait(dt, P.dead || P.reviving ? 0 : sp);
     tickTrail(dt, sp);
     if (sp > 90 && P.sprinting && Math.random() < dt * 22) addParticle('dust', P.x - Math.cos(P.angle) * P.radius * 1.4 + (Math.random() - 0.5) * P.radius, P.y - Math.sin(P.angle) * P.radius * 1.4 + (Math.random() - 0.5) * P.radius, -P.vx * 0.12, -P.vy * 0.12, 0.5, 0.8 + Math.random() * 0.8, '#d8c7a4', 0);
     if (P.stage >= 4) { hintT -= dt; if (hintT <= 0) { hintT = 0.15; updateMateHint(); } } else P.mateHint = null;
@@ -818,7 +866,7 @@
     if (!Game.camera.target) Game.camera.target = P;
     anim += dt;
     flash = Math.max(0, flash - dt * 2.2); bitePhase = Math.max(0, bitePhase - dt * 4.5);
-    eatT -= dt; drinkT -= dt; spinT -= dt;
+    eatT -= dt; drinkT -= dt; spinT -= dt; reviveGlow = Math.max(0, reviveGlow - dt * 0.7);
     stepParticles(dt);
     if (P.huddled > 0 && P.resting && Math.random() < dt * 1.5 * P.huddled) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 3, P.y + (Math.random() - 0.5) * P.radius * 3, 0, -5 - Math.random() * 4, 1.2, 0.5, '#ffd9a0', 0);
     if (spinT > 0 && P.stage >= 1 && Math.random() < dt * 30) { const tp = tailPos(TAIL); addParticle('spark', tp.x, tp.y, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.5, 0.45, '#ffffff', 0); }
@@ -1302,7 +1350,7 @@
     st.camo = P.upgrades.camo || 0; st.carapace = P.upgrades.carapace || 0; st.venom = (P.upgrades.venom || 0) > 0;
     st.softness = (P.molting && !swapped) ? 0 : P.soft;
     st.flash = flash; st.alpha = 1; st.shell = false;
-    st.deadK = P.dead ? Math.min(1, deathT / 1.6) : 0;
+    st.deadK = (P.dead || P.reviving) ? Math.min(1, deathT / 1.6) : reviveGlow * 0.7;
     st.sx = 1 + 0.13 * sprintK + (eatT > 0 ? 0.03 * Math.sin(anim * 30) : 0); st.sy = 1 - 0.07 * sprintK;
     st.scale = 1 - 0.07 * Math.min(1, curl);
     st.bobLat = Math.sin(gaitPhase) * 0.035 * clamp(Math.hypot(P.vx, P.vy) / 80, 0, 1) + bodyBob * 0.5;
@@ -1318,12 +1366,21 @@
     return st;
   }
 
+  // warm light around the spider as it gets back up (and a faint pulse while it is down waiting for the gift)
+  function drawReviveAura(ctx) {
+    const a = P.reviving ? 0.18 + 0.08 * Math.sin(anim * 7) : reviveGlow; if (a <= 0.01) return;
+    const r = P.radius * (P.reviving ? 3.2 : 3.2 + (1 - reviveGlow) * 4), g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, r);
+    g.addColorStop(0, 'rgba(255,240,190,' + (0.6 * a) + ')'); g.addColorStop(0.5, 'rgba(255,205,110,' + (0.28 * a) + ')'); g.addColorStop(1, 'rgba(255,170,80,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, TAU); ctx.fill(); ctx.restore();
+  }
+
   function drawAll(ctx) {
     const sc = Game.state.scene; if (sc === 'boot') return;
     drawSac(ctx);
     drawEggSac(ctx);
     drawExuvia(ctx);
     drawTrail(ctx);
+    drawReviveAura(ctx);
     drawSpider(ctx, playerState());
     drawSacFront(ctx);
     drawParticles(ctx);

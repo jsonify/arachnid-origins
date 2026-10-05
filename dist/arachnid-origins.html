@@ -30,6 +30,13 @@
     VIEW_W: 1280, VIEW_H: 720,
     WORLD_W: 6400, WORLD_H: 3600,
     DAY_LENGTH: 300,            // seconds for a full day/night cycle
+    // Game modes, chosen on the title screen (New Game) and remembered in Game.settings.mode. The first one is the default.
+    //   brood:    siblings give their lives to revive you (1 sibling = 1 revive)
+    //   survival: one life; siblings still warn you and huddle, but cannot save you
+    MODES: [
+      { id: 'brood',    name: 'Brood',    tag: 'Default', blurb: 'Your siblings have your back. If you would die, a sibling gives its life to bring you back: one sibling, one revive. They also warn you of predators and huddle in while you rest.', note: 'Up to 5 revives, fewer as siblings drift away.' },
+      { id: 'survival', name: 'Survival', tag: 'Hard',    blurb: 'One life, no second chances. Your siblings still warn you of predators and huddle in while you rest, but they cannot save you. When you die, the journey is over.', note: 'No revives.' },
+    ],
     SPAWN: { x: 320, y: 1800 }, // hatch point (inside Leaf Litter)
     ZONES: [
       { id: 'litter', name: 'Leaf Litter',  x0: 0,    x1: 2400, y0: 0, y1: 3600, color: '#5a4327' },
@@ -64,7 +71,7 @@
     // Every sfx name that may be emitted via Game.emit('sfx', {name, x, y, vol}).
     SFX: ['step', 'sprint', 'bite', 'eat', 'drink', 'spin', 'web_place', 'web_snap', 'trap', 'struggle',
           'hurt', 'death', 'molt_start', 'molt_end', 'levelup', 'ui_click', 'ui_hover', 'ui_back', 'unlock',
-          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory'],
+          'danger', 'splash', 'thunder', 'wasp_buzz', 'bird_screech', 'ant_hiss', 'rest', 'courtship', 'egg', 'victory', 'revive'],
     KEYMAP: {
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
@@ -143,7 +150,9 @@
     get(k, d) { try { const v = root.localStorage && root.localStorage.getItem('ao_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return k in memStore ? memStore[k] : d; } },
     set(k, v) { try { root.localStorage.setItem('ao_' + k, JSON.stringify(v)); } catch (e) { memStore[k] = v; } },
   };
-  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true }, Game.store.get('settings', {}));
+  Game.settings = Object.assign({ master: 0.8, music: 0.6, sfx: 0.9, muted: false, science: false, hints: true, screenShake: true, mouseAim: true, keyGuide: true, mode: 'brood' }, Game.store.get('settings', {}));
+  if (!C.MODES.some(m => m.id === Game.settings.mode)) Game.settings.mode = C.MODES[0].id;   // unknown / stale saved value
+  Game.modeInfo = (id) => C.MODES.find(m => m.id === id) || C.MODES[0];
   Game.saveSettings = () => Game.store.set('settings', Game.settings);
 
   // --------------------------------------------------------------- shared state
@@ -154,6 +163,7 @@
     danger: 0,        // 0..1 nearest-predator threat; written by creatures, read by audio/ui
     stats: {},        // free-form counters (eaten, webs, moltCount, daysSurvived...) written by anyone via Game.stat()
     victory: false,
+    mode: 'brood',    // brood|survival: set by Game.newGame(mode)
   };
   Game.stat = (k, add) => { const s = Game.state.stats; s[k] = (s[k] || 0) + (add === undefined ? 1 : add); return s[k]; };
 
@@ -249,7 +259,9 @@
   }
 
   // ------------------------------------------------------------- game control
-  Game.newGame = () => {
+  // mode: a Game.C.MODES id; omitted = the one last chosen (Game.settings.mode, saved by the title screen)
+  Game.newGame = (mode) => {
+    Game.state.mode = Game.modeInfo(mode || Game.settings.mode).id;
     Game.state.victory = false; Game.state.danger = 0; Game.state.stats = {};
     Game.time.t = 0;
     modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });
@@ -2537,7 +2549,7 @@
     canSpin(type) {
       type = type || webs.selected;
       const P = Game.player;
-      if (!type || !TYPE[type] || !P || P.dead || P.molting) return false;
+      if (!type || !TYPE[type] || !P || P.dead || P.reviving || P.molting) return false;
       if (!webs.unlocked(type)) return false;
       return (P.silk || 0) >= webs.cost(type);
     },
@@ -2548,7 +2560,7 @@
       if (!type || !TYPE[type] || !P) return null;
       if (webs._cool > 0) return null;
       if (!webs.unlocked(type)) { fail('locked'); return null; }
-      if (P.dead || P.molting) return null;
+      if (P.dead || P.reviving || P.molting) return null;
       if ((P.silk || 0) < webs.cost(type)) { fail('silk'); return null; }
       const ang = typeof P.angle === 'number' ? P.angle : 0;
       const w = newWeb(type, P.x, P.y, ang);
@@ -2647,7 +2659,7 @@
       ensureSelection();
 
       // ---- input
-      const canAct = P && !P.dead && !P.molting && Game.state.scene === 'playing' && webs._gate <= 0 && Game.input;
+      const canAct = P && !P.dead && !P.reviving && !P.molting && Game.state.scene === 'playing' && webs._gate <= 0 && Game.input;
       if (canAct) {
         for (let k = 1; k <= 4; k++) {
           if (Game.input.pressed('web' + k)) {
@@ -3730,6 +3742,10 @@
   const REST_REGEN = 6.0;                       // energy / s while resting (x3 sheltered)
   // Huddling with siblings (Game.creatures.huddle, up to 3 of them close by) while resting: per sibling, recover faster and burn less food and water
   const HUDDLE_ENERGY = 0.15, HUDDLE_HEAL = 0.2, HUDDLE_DRAIN = 0.12;
+  // Sibling revive: a fatal blow downs the spider instead while a sibling is left (Game.creatures.claimSibling). The sibling runs in and gives its
+  // life, and the spider gets up with REVIVE_HP of its health, meters topped up to REVIVE_METER and REVIVE_INVULN s of grace. 1 sibling = 1 revive.
+  const REVIVE_HP = 0.5, REVIVE_METER = 35, REVIVE_INVULN = 4;
+  const REVIVE_MAX = 4;       // longest the spider stays down waiting for the gift (s); the sibling normally arrives well before
 
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
@@ -3763,7 +3779,7 @@
     hp: 30, maxHp: 30, hunger: 80, hydration: 80, energy: 100, silk: 20, maxSilk: 20,
     growth: 0, growthNeeded: 60, upgrades: {},
     speedMul: 1, biteMul: 1, stealth: 1, damageTaken: 1, senseRadius: 60, drainMul: 1,
-    hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null,
+    hidden: false, resting: false, moltTimer: 0, molting: false, dead: false, deathCause: null, reviving: false, revives: 0,
     stateLabel: 'walking', mate: { found: false, courted: false, laid: false }, mateHint: null,
     // extras (documented in the report)
     interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1, huddled: 0,
@@ -3776,6 +3792,7 @@
   let hatchT = 0, moltT = 0, courtT = 0, layT = 0, deathT = 0, endT = 0, victoryFired = false, gaitPhase = 0, abAng = 0, prevAng = 0;
   let sfxStepT = 0, trailT = 0, mateRetryT = 0, exhaustedFlag = false, dotBuf = 0, dotSrc = 'damage', hurtSfxT = 0, chooseWait = 0;
   let enterT = 0, exitCd = 0, restToggleCd = 0, noInputT = 0, statT = 0, lastGood = { x: 0, y: 0 };
+  let reviveSib = null, reviveCause = null, reviveLanded = false, reviveGlow = 0;
   let sac = null, exuvia = null, pendingStage = 0, swapped = false, courtMateRef = null, layTarget = null, bodyBob = 0;
   const feet = [];     // per-leg gait state
   const trail = [];    // dragline trail points
@@ -3831,7 +3848,7 @@
     this.hunger = 80; this.hydration = 80; this.energy = 100;
     this.growth = 0; this.growthNeeded = this.stageInfo.growthNeeded;
     this.hidden = false; this.resting = false; this.moltTimer = 0; this.molting = false; this.moltPhase = 'none';
-    this.dead = false; this.deathCause = null; this.stateLabel = 'walking';
+    this.dead = false; this.deathCause = null; this.reviving = false; this.revives = 0; this.stateLabel = 'walking';
     this.mate = { found: false, courted: false, laid: false }; this.mateHint = null;
     this.interactHint = ''; this.inShelter = null; this.exhausted = false; this.sprinting = false; this.huddled = 0;
     this.invuln = SPAWN_INVULN; this.offers = []; this.soft = 0; this.eggSac = null;
@@ -3841,6 +3858,7 @@
     sfxStepT = 0; trailT = 0; mateRetryT = 0; exhaustedFlag = false; dotBuf = 0; hurtSfxT = 0; chooseWait = 0;
     enterT = 0; exitCd = 0; restToggleCd = 0; noInputT = 0; statT = 0; swapped = false; courtMateRef = null; layTarget = null; bodyBob = 0;
     exuvia = null; trail.length = 0; parts.length = 0;
+    reviveSib = null; reviveCause = null; reviveLanded = false; reviveGlow = 0;
     sac = { x: this.x, y: this.y, r: this.radius * 3.1, ang: this.angle, t: 0 };
     snapFeet();
     lastGood.x = this.x; lastGood.y = this.y;
@@ -3855,6 +3873,7 @@
     Game.addDrawer(Game.LAYER.PLAYER, drawAll);
     Game.on('web:spun', () => { spinT = 0.55; });
     Game.on('mate:found', () => { if (P.mate) P.mate.found = true; });
+    Game.on('kin:sacrifice', (d) => { if (P.reviving && d && d.creature === reviveSib) reviveLanded = true; });
   };
 
   // ---- silk ----------------------------------------------------------------------------
@@ -3888,7 +3907,7 @@
 
   P.damage = function (amount, source) {
     amount = num(amount, 0);
-    if (this.dead || amount <= 0 || this.invuln > 0) return 0;
+    if (this.dead || this.reviving || amount <= 0 || this.invuln > 0) return 0;
     const soft = (this.molting || this.moltTimer > 0) ? 2 : 1;
     const actual = Math.min(this.hp, amount * this.damageTaken * soft);
     this.hp -= actual;
@@ -3906,7 +3925,7 @@
 
   // damage over time (starvation, rain ...): no flash spam, no i-frames respected for survival drains
   function dot(amount, source, dt) {
-    if (P.dead || amount <= 0) return;
+    if (P.dead || P.reviving || amount <= 0) return;
     if (P.invuln > 0) return;
     const soft = (P.molting || P.moltTimer > 0) ? 2 : 1;
     const a = Math.min(P.hp, amount * P.damageTaken * soft);
@@ -3917,7 +3936,8 @@
   }
 
   function die(cause) {
-    if (P.dead) return;
+    if (P.dead || P.reviving) return;
+    if (beginRevive(cause)) return;
     P.dead = true; P.deathCause = cause; P.hp = 0; deathT = 0;
     P.resting = false; P.courting = false; P.laying = false; P.stateLabel = 'dead';
     P.vx *= 0.3; P.vy *= 0.3;
@@ -3926,6 +3946,44 @@
     sfx('death', 1); Game.camera.shake(9);
     stat('deaths');
     for (let i = 0; i < 12; i++) addParticle('spark', P.x, P.y, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, 0.9, 0.8, '#b9a58a', 0);
+  }
+
+  // a sibling is still around: go down instead of dying; reviveUpdate() keeps the spider down until the sibling's gift lands
+  function beginRevive(cause) {
+    const cr = Game.creatures; if (!has(cr, 'claimSibling') || Game.state.mode === 'survival') return false;   // Survival mode: one life
+    let sib = null;
+    try { sib = cr.claimSibling(P.x, P.y); } catch (e) { Game.reportError('player.revive', e); }
+    if (!sib) return false;
+    P.reviving = true; reviveSib = sib; reviveCause = cause; reviveLanded = false; deathT = 0;
+    P.hp = 0; P.invuln = REVIVE_MAX + REVIVE_INVULN;   // nothing can touch a downed spider
+    P.courting = false; P.laying = false; P.stateLabel = 'downed';
+    setResting(false); P.vx *= 0.3; P.vy *= 0.3;
+    if (dotBuf > 0) { Game.emit('player:damaged', { amount: dotBuf, source: dotSrc }); dotBuf = 0; }
+    Game.emit('player:downed', { cause, left: num(cr.siblings, 0) });
+    sfx('hurt', 1); Game.camera.shake(6);
+    for (let i = 0; i < 8; i++) addParticle('spark', P.x, P.y, (Math.random() - 0.5) * 36, (Math.random() - 0.5) * 36, 0.8, 0.7, '#b9a58a', 0);
+    return true;
+  }
+  function reviveUpdate(dt) {
+    deathT += dt;
+    P.vx *= Math.exp(-6 * dt); P.vy *= Math.exp(-6 * dt);
+    moveBy(P.vx * dt, P.vy * dt);
+    curl = Math.min(1.15, curl + dt * 1.1);
+    if (reviveLanded || deathT > REVIVE_MAX) finishRevive();
+  }
+  function finishRevive() {
+    const cr = Game.creatures, cause = reviveCause;
+    P.reviving = false; reviveSib = null; reviveLanded = false;
+    P.hp = Math.max(1, P.maxHp * REVIVE_HP);
+    // top the meters up too, or a spider downed by hunger, thirst or exhaustion would drop straight back down
+    P.hunger = Math.max(P.hunger, REVIVE_METER); P.hydration = Math.max(P.hydration, REVIVE_METER); P.energy = Math.max(P.energy, REVIVE_METER);
+    exhaustedFlag = false; exhaustT = 0; P.exhausted = false;
+    P.invuln = REVIVE_INVULN; P.stateLabel = 'walking';
+    reviveGlow = 1; flash = 0; P.revives++; stat('revives');
+    if (P.stage < 4 && P.growth >= P.growthNeeded && !P.molting) startMolt();
+    Game.emit('player:revived', { cause, left: has(cr, 'claimSibling') ? num(cr.siblings, 0) : 0, total: P.revives });
+    sfx('revive', 1); Game.camera.shake(3);
+    for (let i = 0; i < 18; i++) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 2, P.y + (Math.random() - 0.5) * P.radius * 2, (Math.random() - 0.5) * 30, -10 - Math.random() * 22, 1.0 + Math.random() * 0.8, 0.6 + Math.random() * 0.8, '#ffe6a0', 0);
   }
 
   function setResting(on) {
@@ -3951,7 +4009,7 @@
   };
 
   function startMolt() {
-    if (P.molting || P.dead || P.stage >= 4) return;
+    if (P.molting || P.dead || P.reviving || P.stage >= 4) return;   // (a molt that came due while downed starts once the spider is up: finishRevive)
     P.molting = true; P.moltPhase = 'choose'; P.offers = P.offerUpgrades(); chooseWait = 0;
     pendingStage = P.stage + 1; swapped = false; moltT = 0;
     setResting(false); P.inShelter = null; P.vx = P.vy = 0; P.stateLabel = 'molting';
@@ -4171,7 +4229,7 @@
 
   // ---- biting ----------------------------------------------------------------------------------------------------------
   P.bite = function () {
-    if (this.dead || this.molting || this.courting || this.laying || this.hatching || biteCd > 0) return false;
+    if (this.dead || this.reviving || this.molting || this.courting || this.laying || this.hatching || biteCd > 0) return false;
     const cr = Game.creatures, si = this.stageInfo;
     biteCd = Math.max(0.34, 0.58 - 0.05 * this.stage);
     bitePhase = 1;
@@ -4345,6 +4403,8 @@
 
     if (P.dead) {
       deathUpdate(dt); sp = 0; mScale = 0; P.sprinting = false;
+    } else if (P.reviving) {
+      reviveUpdate(dt); sp = 0; mScale = 0; P.sprinting = false;
     } else if (P.hatching) {
       sp = hatchUpdate(dt); mScale = 0; P.stateLabel = 'walking';
     } else if (P.molting) {
@@ -4391,8 +4451,8 @@
     meters(dt * mScale, sp > 8, sprint);
     // visual state
     const curlT = (P.resting && sp < 6) ? 1 : 0;
-    if (!P.dead) curl += (curlT - curl) * (1 - Math.exp(-5 * dt));
-    tickGait(dt, P.dead ? 0 : sp);
+    if (!P.dead && !P.reviving) curl += (curlT - curl) * (1 - Math.exp(-5 * dt));
+    tickGait(dt, P.dead || P.reviving ? 0 : sp);
     tickTrail(dt, sp);
     if (sp > 90 && P.sprinting && Math.random() < dt * 22) addParticle('dust', P.x - Math.cos(P.angle) * P.radius * 1.4 + (Math.random() - 0.5) * P.radius, P.y - Math.sin(P.angle) * P.radius * 1.4 + (Math.random() - 0.5) * P.radius, -P.vx * 0.12, -P.vy * 0.12, 0.5, 0.8 + Math.random() * 0.8, '#d8c7a4', 0);
     if (P.stage >= 4) { hintT -= dt; if (hintT <= 0) { hintT = 0.15; updateMateHint(); } } else P.mateHint = null;
@@ -4524,7 +4584,7 @@
     if (!Game.camera.target) Game.camera.target = P;
     anim += dt;
     flash = Math.max(0, flash - dt * 2.2); bitePhase = Math.max(0, bitePhase - dt * 4.5);
-    eatT -= dt; drinkT -= dt; spinT -= dt;
+    eatT -= dt; drinkT -= dt; spinT -= dt; reviveGlow = Math.max(0, reviveGlow - dt * 0.7);
     stepParticles(dt);
     if (P.huddled > 0 && P.resting && Math.random() < dt * 1.5 * P.huddled) addParticle('spark', P.x + (Math.random() - 0.5) * P.radius * 3, P.y + (Math.random() - 0.5) * P.radius * 3, 0, -5 - Math.random() * 4, 1.2, 0.5, '#ffd9a0', 0);
     if (spinT > 0 && P.stage >= 1 && Math.random() < dt * 30) { const tp = tailPos(TAIL); addParticle('spark', tp.x, tp.y, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.5, 0.45, '#ffffff', 0); }
@@ -5008,7 +5068,7 @@
     st.camo = P.upgrades.camo || 0; st.carapace = P.upgrades.carapace || 0; st.venom = (P.upgrades.venom || 0) > 0;
     st.softness = (P.molting && !swapped) ? 0 : P.soft;
     st.flash = flash; st.alpha = 1; st.shell = false;
-    st.deadK = P.dead ? Math.min(1, deathT / 1.6) : 0;
+    st.deadK = (P.dead || P.reviving) ? Math.min(1, deathT / 1.6) : reviveGlow * 0.7;
     st.sx = 1 + 0.13 * sprintK + (eatT > 0 ? 0.03 * Math.sin(anim * 30) : 0); st.sy = 1 - 0.07 * sprintK;
     st.scale = 1 - 0.07 * Math.min(1, curl);
     st.bobLat = Math.sin(gaitPhase) * 0.035 * clamp(Math.hypot(P.vx, P.vy) / 80, 0, 1) + bodyBob * 0.5;
@@ -5024,12 +5084,21 @@
     return st;
   }
 
+  // warm light around the spider as it gets back up (and a faint pulse while it is down waiting for the gift)
+  function drawReviveAura(ctx) {
+    const a = P.reviving ? 0.18 + 0.08 * Math.sin(anim * 7) : reviveGlow; if (a <= 0.01) return;
+    const r = P.radius * (P.reviving ? 3.2 : 3.2 + (1 - reviveGlow) * 4), g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, r);
+    g.addColorStop(0, 'rgba(255,240,190,' + (0.6 * a) + ')'); g.addColorStop(0.5, 'rgba(255,205,110,' + (0.28 * a) + ')'); g.addColorStop(1, 'rgba(255,170,80,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, TAU); ctx.fill(); ctx.restore();
+  }
+
   function drawAll(ctx) {
     const sc = Game.state.scene; if (sc === 'boot') return;
     drawSac(ctx);
     drawEggSac(ctx);
     drawExuvia(ctx);
     drawTrail(ctx);
+    drawReviveAura(ctx);
     drawSpider(ctx, playerState());
     drawSacFront(ctx);
     drawParticles(ctx);
@@ -5319,7 +5388,7 @@
     diet: ['springtail', 'mite', 'midge'], habitat: ['litter'],
     value: { hunger: 0, growth: 0 }, danger: 0, color: '#c88a3a', color2: '#5a3a1a',
     fact: 'A spider egg sac can hold hundreds of eggs. The young molt once inside the sac, then emerge and cluster together for a few days before dispersing - often by "ballooning": releasing a strand of silk that catches the air and carries them away, sometimes for hundreds of kilometers. Clustering helps tiny spiderlings hold on to moisture, and many eyes make a better lookout: when one senses danger the whole cluster reacts. Spiders are not insects: they have two body segments, eight legs, and no antennae.',
-    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. They drift away as you grow.',
+    description: 'Your brothers and sisters. They stay close, warn you when a predator is near (an arrow points the way) and huddle in while you rest, so you recover faster and burn less food and water. In Brood mode, if you would die, a sibling gives its life to bring you back: one sibling, one revive (Survival mode has no revives). They drift away as you grow.',
   });
   def({
     id: 'mate', name: 'Suitor', latin: 'Araneus diadematus (adult male)', role: 'spider', tier: 4, spider: true,
@@ -6439,7 +6508,7 @@
       li: -1, cell: 0, blocked: 0, accDt: 0, upd: 0, idleWhy: '', chaseT: 0, lsx: 0, lsy: 0, hitDone: false, curlT: 0,
       ax: 0, ay: 0, bx: 0, by: 0, trailDir: 1, trailWait: 0, avx: 0, avy: 0, avT: 0, grp: 0, noSci: false, awareT: 0, voiceT: 0, struggleSfx: 0,
       lockX: 0, lockY: 0, lockT: 0, strikeR: 0, shadowA: 0, shadowS: 1, skyA: 0, skyS: 1, phaseT: 0, hitRes: 0, dist: 0, ang2: 0, gatherT: 0, gx: 0, gy: 0,
-      disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0,
+      disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0, sac: 0, sacT: 0,
     };
   }
   function create(k, x, y, o) {
@@ -6459,7 +6528,7 @@
     c.alt = c.flying ? 10 + rnd() * 8 : 0; c.altT = c.alt; c.wasFlying = false;
     c.blocked = 0; c.accDt = 0; c.upd = -1; c.idleWhy = ''; c.chaseT = 0; c.hitDone = false; c.curlT = 0;
     c.trailDir = 1; c.trailWait = 0; c.avx = 0; c.avy = 0; c.avT = 0; c.grp = 0; c.noSci = false; c.awareT = 0; c.voiceT = rnd() * 2; c.struggleSfx = 0;
-    c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false;
+    c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false; c.sac = 0; c.sacT = 0;
     c.spawnStage = S.stage; c.eatT = 0; c.rainWait = 0; c.flapT = 0; c.dx = 0; c.dy = 0; c.ax = x; c.ay = y; c.bx = x; c.by = y;
     if (o) {
       if (o.state) c.state = o.state;
@@ -6501,7 +6570,7 @@
     if (!silent) c.flying = c.wasFlying;
   }
   function kill(c, by, src) {
-    if (!c || c.dead || c.k.unique) return false;
+    if (!c || c.dead || c.k.unique || (c.sac && by !== 'sacrifice')) return false;
     const k = c.k, P = S.P;
     const edible = by === 'player' && P && canEat(pRad(), c);
     c.dead = true; c.hp = 0; needCompact = true;
@@ -6519,7 +6588,7 @@
   }
   function hurt(c, dmg, by, src) {
     if (c.dead || dmg <= 0) return false;
-    if (c.k.unique) return false;
+    if (c.k.unique || c.sac) return false;
     c.hp -= dmg; c.flash = 0.25; c.hitT = 3.5;
     if (c.hp <= 0) return kill(c, by, src);
     if (c.state === 'idle') { c.state = 'wander'; c.t = 0.2; c.idleWhy = ''; }
@@ -7031,13 +7100,73 @@
     if (P && !P.dead && S.playing) {
       const r = HUDDLE_R * (0.6 + P.radius / 14), r2 = r * r;
       for (let i = 0; i < list.length && n < HUDDLE_MAX; i++) {
-        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.state === 'flee') continue;
+        const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac || c.state === 'flee') continue;
         const dx = c.x - P.x, dy = c.y - P.y; if (dx * dx + dy * dy < r2) n++;
       }
     }
     S.huddle = n;
   }
+  // ---- SACRIFICE: when a blow would kill the player, player.js asks for a sibling (claimSibling). That sibling runs in, settles on the
+  //      player and glows (SAC_GIVE s), then gives its life: it vanishes in a burst of light, hunters nearby are startled off, and
+  //      `kin:sacrifice` tells player.js to bring the spider back. One sibling per revive. While claimed (c.sac): 1 = running in,
+  //      2 = giving. A claimed sibling is hidden from hunters and can't be hurt, so the revive always completes.
+  const SAC_SPEED = 320, SAC_RUN_MAX = 2.2, SAC_GIVE = 0.8, SAC_STARTLE_R = 300;
+  // siblings still with the player: alive, not drifting away, not already giving their life
+  function siblingCount() {
+    let n = 0;
+    for (let i = 0; i < list.length; i++) { const c = list[i]; if (!c.dead && c.kind === 'kin' && !c.disperse && !c.sac) n++; }
+    return n;
+  }
+  function claimSibling(x, y) {
+    let best = null, bd = 1e18;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac) continue;
+      const dx = c.x - x, dy = c.y - y, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = c; }
+    }
+    if (!best) return null;
+    best.sac = 1; best.sacT = 0; best.hidden = true; best.alertT = 0; best.gatherT = 0; best.target = null;
+    return best;
+  }
+  // the burst of light startles hunters close by: they back off for a few seconds so the revived spider can get away
+  function startle(x, y, r) {
+    const r2 = r * r; let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i]; if (c.dead || c.k.ai !== 'hunter' || c.state === 'stuck') continue;
+      const dx = c.x - x, dy = c.y - y; if (dx * dx + dy * dy > r2) continue;
+      fleeFrom(c, x, y, 2.4 + rnd() * 1.2); c.alertT = 0.6; c.alertCol = '#ffd24a'; c.awareT = 0; c.cool2 = 4 + rnd() * 2; n++;
+    }
+    return n;
+  }
+  function sacrificeKin(c, dt) {
+    const P = S.P;
+    if (!P) { c.sac = 0; c.hidden = false; return; }   // no player to give to (scene changed): back to being a normal sibling
+    c.sacT += dt; c.alertT = 0; c.state = 'wander'; c.hidden = true;
+    // it hovers at its own spot beside the spider (so the glow shows on screen rather than under the spider's body)
+    const gx = P.x + cos(c.seed * TAU) * P.radius * 1.3, gy = P.y + sin(c.seed * TAU) * P.radius * 1.3;
+    const dx = gx - c.x, dy = gy - c.y, d = hypot(dx, dy);
+    if (c.sac === 1) {
+      if (d <= c.radius + 2 || c.sacT > SAC_RUN_MAX) {
+        c.sac = 2; c.sacT = 0; startle(P.x, P.y, SAC_STARTLE_R);
+        emitSfx('rest', c.x, c.y, 0.8);
+      } else { steer(c, atan2(dy, dx), SAC_SPEED, dt, 14); integrate(c, dt); return; }
+    }
+    // giving: settle onto the player and glow brighter until the gift lands
+    const e = min(1, dt * 7); c.x += dx * e; c.y += dy * e; c.vx = c.vy = 0; faceTo(c, P.x, P.y, 6, dt);
+    if (c.sacT >= SAC_GIVE) {
+      const x = P.x, y = P.y;
+      addFx('revive', x, y, P.radius * 7, 1.2);
+      c.sac = 3; removeQuiet(c);
+      Game.emit('kin:sacrifice', { creature: c, x, y, left: siblingCount() });
+    }
+  }
+  function drawSacGlow(ctx, c) {
+    const g = c.sac === 2 ? 0.45 + 0.55 * clamp(c.sacT / SAC_GIVE, 0, 1) : 0.3 + min(0.15, c.sacT * 0.3), r = c.radius * (4 + g * 6);
+    const grd = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
+    grd.addColorStop(0, 'rgba(255,240,190,' + (0.85 * g) + ')'); grd.addColorStop(0.4, 'rgba(255,205,110,' + (0.4 * g) + ')'); grd.addColorStop(1, 'rgba(255,170,80,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, TAU); ctx.fill(); ctx.restore();
+  }
   function thinkKin(c, dt) {
+    if (c.sac) { sacrificeKin(c, dt); return; }
     const k = c.k, P = S.P, alive = !!(P && !P.dead);
     c.senseT -= dt; c.gatherT -= dt;
     const pr = P ? P.radius : 5;
@@ -7391,6 +7520,7 @@
   }
   function ceil(v) { return Math.ceil(v); }
 
+  const KIN_START = 5;
   function spawnKin(n) {
     for (let i = 0; i < n; i++) {
       const a = rnd() * TAU, r = 22 + rnd() * 50;
@@ -7425,7 +7555,7 @@
       }
     };
     ensure('springtail', 16, 7); ensure('mite', 10, 4); ensure('midge', 8, 3);
-    spawnKin(5);
+    spawnKin(KIN_START);
   }
 
   // ================================================================= player-facing API
@@ -7593,7 +7723,7 @@
   function updateKinCount() {
     const wanted = [5, 4, 3, 1, 0][min(4, S.stage)];
     let n = 0, far = null, fd = -1;
-    for (let i = 0; i < list.length; i++) { const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse) continue; n++; const d = hypot(c.x - S.px, c.y - S.py) + rnd() * 30; if (d > fd) { fd = d; far = c; } }
+    for (let i = 0; i < list.length; i++) { const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac) continue; n++; const d = hypot(c.x - S.px, c.y - S.py) + rnd() * 30; if (d > fd) { fd = d; far = c; } }
     if (n > wanted && far) { far.disperse = true; far.wa = rnd() * TAU; }
   }
 
@@ -7603,6 +7733,9 @@
     list, KINDS, corpses, visibleKinds, mate: null,
     alarms: S.alarms,                       // sibling lookout warnings (HUD arrows)
     get huddle() { return S.huddle; },      // siblings huddled with the player right now (0..HUDDLE_MAX)
+    get siblings() { return siblingCount(); },   // siblings still with the player = revives left (player.js)
+    siblingsMax: KIN_START,                 // how many hatch with you
+    claimSibling, startle,                  // claimSibling(x,y) -> the sibling that will give its life (or null); startle(x,y,r) scares hunters off
     kindList() { return KIND_LIST.slice(); },
     spawn, attackAt, nearest, inRadius, spawnMate, trap,
     release(c) { if (c && !c.dead && c.state === 'stuck') { releaseWeb(c, false, false); c.state = 'flee'; c.t = 1.5; c.struggle = 0; c.tx = c.x; c.ty = c.y; c.dashT = 0; c.t2 = 0; } },
@@ -7702,6 +7835,7 @@
       const pad = c.radius * k.ext * 1.15 + 14;
       if (k.ai === 'mate') { if (cam.inView(c.x, c.y, 200)) drawMateAura(ctx, c, T, zoom); }
       if (c.x < v.x0 - pad || c.x > v.x1 + pad || c.y < v.y0 - pad || c.y > v.y1 + pad) continue;
+      if (c.sac) continue;   // drawn by drawHigh, above the player
       drawCreature(ctx, c, T, zoom, sci);
     }
   }
@@ -7709,7 +7843,9 @@
     const cam = Game.camera, v = cam.view, T = Game.time.real, zoom = cam.zoom, sci = !!Game.settings.science;
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
-      if (c.dead || !c.flying || c.k.ai === 'bird') continue;
+      if (c.dead || c.k.ai === 'bird') continue;
+      if (c.sac) { if (cam.inView(c.x, c.y, 80)) { drawSacGlow(ctx, c); drawCreature(ctx, c, T, zoom, sci); } continue; }
+      if (!c.flying) continue;
       const pad = c.radius * c.k.ext * 1.15 + 14 + c.alt;
       if (c.x < v.x0 - pad || c.x > v.x1 + pad || c.y < v.y0 - pad || c.y > v.y1 + pad) continue;
       drawCreature(ctx, c, T, zoom, sci);
@@ -7729,6 +7865,12 @@
     if (f.kind === 'puff') {
       ctx.fillStyle = 'rgba(190,170,130,' + (0.35 * (1 - q)) + ')';
       for (let i = 0; i < 7; i++) { const a = i * 0.9 + 0.3, r = f.r * (0.2 + q * 0.9); ctx.beginPath(); ctx.arc(f.x + cos(a) * r, f.y + sin(a) * r, f.r * (0.28 - q * 0.12), 0, TAU); ctx.fill(); }
+    } else if (f.kind === 'revive') {
+      const e = 1 - (1 - q) * (1 - q);
+      ctx.fillStyle = 'rgba(255,240,200,' + (0.4 * (1 - q)) + ')'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.12 + e * 0.5), 0, TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,224,150,' + (0.75 * (1 - q)) + ')'; ctx.lineWidth = 2.5 / zoom; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.2 + e * 0.85), 0, TAU); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,236,170,' + (0.9 * (1 - q)) + ')';
+      for (let i = 0; i < 9; i++) { const a = i * TAU / 9 + 0.4, rr = f.r * (0.15 + e * 0.8); ctx.beginPath(); ctx.arc(f.x + cos(a) * rr, f.y + sin(a) * rr - q * f.r * 0.5, f.r * 0.05 * (1 - q * 0.6), 0, TAU); ctx.fill(); }
     } else {
       ctx.strokeStyle = 'rgba(255,90,60,' + (0.6 * (1 - q)) + ')'; ctx.lineWidth = 2 / zoom; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.6 + q * 0.7), 0, TAU); ctx.stroke();
       ctx.fillStyle = 'rgba(190,150,110,' + (0.3 * (1 - q)) + ')'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.5 + q * 0.5), 0, TAU); ctx.fill();
@@ -7852,6 +7994,9 @@
   F('courtship', 'behavior', 'Courtship Signals',
     'Males of many species court with vibrations, drumming or dances so that the female recognizes a mate rather than a meal. Females are often larger than males, so a clear signal matters.',
     'Court a mate.', { event: 'courtship:done' });
+  F('brood_sacrifice', 'behavior', 'Sacrifice for the Brood',
+    'In this game a sibling gives its life to revive you, but real spiderlings do not do that for one another: many species compete, and some eat their own siblings. Self-sacrifice does exist, though, and it comes from mothers. A Stegodyphus velvet spider mother feeds her young, then lets them eat her body, a last meal known as matriphagy.',
+    'Be revived by a sibling.', { event: 'player:revived' });
   F('pheromones', 'behavior', 'Following Chemical Trails',
     'Female spiders leave pheromones on their silk and the ground. Males detect them with chemoreceptors on their legs and pedipalps, a scent-by-touch way of finding a mate.',
     'Find a mate.', { event: 'mate:found' });
@@ -8135,7 +8280,7 @@
   // ---------------------------------------------------------------------- module
   const WIRED = ['stage:change', 'molt:start', 'molt:choose', 'molt:end', 'player:damaged', 'player:died', 'player:ate', 'player:drank',
     'player:rest', 'creature:seen', 'creature:killed', 'creature:attack', 'web:spun', 'web:trapped', 'web:destroyed', 'zone:enter',
-    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory'];
+    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived'];
 
   const edu = {
     priority: 50,
@@ -8373,6 +8518,7 @@
       if (st === 4 && p.mate && p.mate.found && !p.mate.courted) return 'Press E next to the mate to court. You need hunger above 35%.';
       if (st === 4 && p.mate && p.mate.courted && !p.mate.laid) return 'Find a hidden egg site (a hollow or shelter) and press E to lay your egg sac.';
       if (Game.world && Game.world.isNight && Game.world.isNight() && t > 20) { return 'Night: darker, and some predators are more active. Vibration Sense shows nearby creatures.'; }
+      if (t < 120 && cr && cr.siblings > 0 && Game.state.mode !== 'survival') return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
       if (t < 90 && !f.hidden) return 'Predators track movement. Press R while hidden to rest and recover.';
       if (t < 150) return 'Press B to open your Codex, and F for Science Mode.';
       return '';
@@ -8615,12 +8761,13 @@
     rest(V) { const t = V.t; [220, 277.2, 329.6].forEach((f, i) => pad(V.out, f, t + i * 0.1, 2.2, 0.06, 0.7)); nz(V.out, t, 1.5, 0.045, 'lowpass', 500, 200, 0.7, 0.5); },
     courtship(V) { const t = V.t; [659.25, 783.99, 880, 987.77, 880, 783.99, 987.77, 1174.7].forEach((f, i) => pluck(V.out, f, t + i * 0.17, 0.17, 0.8)); },
     egg(V) { const t = V.t; [261.6, 392, 523.25].forEach((f, i) => bell(V.out, f, t + i * 0.24, 0.2, 1.8)); nz(V.out, t + 0.4, 0.9, 0.025, 'highpass', 6500, 0, 0.7, 0.2); },
+    revive(V) { const t = V.t; [392, 523.25, 659.25, 783.99].forEach((f, i) => bell(V.out, f, t + i * 0.12, 0.2, 1.5)); [196, 261.6, 329.6].forEach(f => pad(V.out, f, t, 2.4, 0.07, 0.5)); nz(V.out, t + 0.1, 0.9, 0.03, 'highpass', 6500, 0, 0.7, 0.25); },
     victory(V) { const t = V.t; [523.25, 659.25, 783.99, 1046.5, 1318.5, 1568].forEach((f, i) => bell(V.out, f, t + i * 0.15, 0.17, 1.6)); [262, 330, 392, 523].forEach(f => pad(V.out, f, t + 0.1, 3.4, 0.07, 1.0)); },
   };
-  const WET = { death: 0.55, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
-  const PRIORITY = { death: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
+  const WET = { death: 0.55, revive: 0.5, victory: 0.5, egg: 0.5, unlock: 0.45, levelup: 0.35, molt_end: 0.4, courtship: 0.4, rest: 0.4, thunder: 0.35, web_place: 0.2, bird_screech: 0.3, wasp_buzz: 0.1, ui_click: 0, ui_hover: 0, ui_back: 0, step: 0.06, sprint: 0.06, spin: 0.2, splash: 0.2 };
+  const PRIORITY = { death: 1, revive: 1, victory: 1, levelup: 1, molt_start: 1, molt_end: 1, unlock: 1, hurt: 1, thunder: 1, egg: 1, courtship: 1, danger: 1, ui_click: 1, ui_back: 1, ui_hover: 1 };
   const MINGAP = { step: 0.07, sprint: 0.12, struggle: 0.12, ui_hover: 0.05, bite: 0.06, wasp_buzz: 0.5, ant_hiss: 0.3, splash: 0.12, drink: 0.2, eat: 0.2, spin: 0.15 };
-  const NO_SPACE = { ui_click: 1, ui_hover: 1, ui_back: 1, unlock: 1, levelup: 1, molt_start: 1, molt_end: 1, death: 1, victory: 1, egg: 1, courtship: 1, danger: 1, rest: 1, thunder: 1 };
+  const NO_SPACE = { ui_click: 1, ui_hover: 1, ui_back: 1, unlock: 1, levelup: 1, molt_start: 1, molt_end: 1, death: 1, revive: 1, victory: 1, egg: 1, courtship: 1, danger: 1, rest: 1, thunder: 1 };
 
   function playSfx(name, o) {
     if (!ctx || !A.ready) return false;
@@ -9393,6 +9540,10 @@
     const back = { x: W / 2 - 110, y: y + h - 78, w: 220, h: 44 };
     return { x, y, w, h, rows, back };
   }
+  function modeLayout() {
+    const b = { x: (W - 840) / 2, y: 110, w: 840, h: 500 }, n = C.MODES.length, cw = 372, ch = 300, gap = 36, x0 = b.x + (b.w - (n * cw + (n - 1) * gap)) / 2;
+    return { b, cards: C.MODES.map((m, i) => ({ x: x0 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
+  }
   const subBackRect = (py, ph) => ({ x: W / 2 - 110, y: py + ph - 62, w: 220, h: 44 });
   const confirmRects = () => [{ x: W / 2 - 250, y: 392, w: 240, h: 48 }, { x: W / 2 + 10, y: 392, w: 240, h: 48 }];
   const endRects = (y) => [{ x: W / 2 - 250, y, w: 240, h: 52 }, { x: W / 2 + 10, y, w: 240, h: 52 }];
@@ -9432,6 +9583,12 @@
       ui.stageCard = { stage: d.stage, t0: real(), dur: 11 };
     });
     Game.on('player:died', (d) => { ui.death.cause = d && d.cause; });
+    Game.on('player:downed', () => { pushBanner({ title: 'You are down', sub: 'A sibling rushes to your side...', kind: 'kin', dur: 2.2 }); });
+    Game.on('player:revived', (d) => {
+      const n = (d && d.left) || 0;
+      ui.banners = ui.banners.filter(b => b.kind !== 'kin');   // replaces "You are down" at once instead of queueing behind it
+      pushBanner({ title: 'A sibling gave its life', sub: n > 0 ? n + (n === 1 ? ' sibling' : ' siblings') + ' left to watch over you' : 'No siblings are left to save you again', kind: 'kin', dur: 4.5 });
+    });
     Game.on('molt:start', (d) => { ui.moltInfo = d || null; });
     Game.addScreenDrawer(Game.LAYER.HUD, drawHUDLayer);
     Game.addScreenDrawer(Game.LAYER.MENU, drawMenuLayer);
@@ -9503,7 +9660,7 @@
     if (act < 0) return;
     sfx('ui_click');
     const id = TITLE_ITEMS[act].id;
-    if (id === 'new') Game.newGame();
+    if (id === 'new') { ui.sub = 'mode'; ui.idx.mode = Math.max(0, C.MODES.findIndex(m => m.id === Game.settings.mode)); }   // choose a mode first; the last choice is highlighted
     else if (id === 'bestiary') { ui.codex.tab = 0; Game.setScene('codex'); }
     else { ui.sub = id; ui.idx[id] = 0; }
   }
@@ -9531,9 +9688,30 @@
     }
     if (nav.back || (owner === 'paused' && nav.pause)) { sfx('ui_back'); ui.sub = null; return; }
     if (sub === 'settings') return updateSettings(nav);
+    if (sub === 'mode') return updateMode(nav);
     // howto / credits: a single Back button
     const pl = subPanelBox(sub), br = subBackRect(pl.y, pl.h);
     if (nav.confirm || (nav.click && inRect(nav.mx, nav.my, br))) { sfx('ui_back'); ui.sub = null; }
+  }
+
+  // New Game -> pick a mode (cards side by side; arrows / mouse to choose, Enter / click to begin)
+  function startGame(mode) {
+    ui.sub = null;
+    if (Game.settings.mode !== mode) setSetting('mode', mode);   // remembered for next time and for Try Again
+    Game.newGame(mode);
+  }
+  function updateMode(nav) {
+    const L = modeLayout(), n = L.cards.length, key = 'mode';
+    if (ui.idx[key] == null) ui.idx[key] = 0;
+    let i = ui.idx[key];
+    if (nav.left || nav.up) i = setIdx(key, i - 1, n);
+    if (nav.right || nav.down) i = setIdx(key, i + 1, n);
+    if (nav.moved) for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k]) && k !== i) i = setIdx(key, k, n);
+    if (nav.click) {
+      if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = null; return; }
+      for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; sfx('ui_click'); startGame(C.MODES[k].id); return; }
+    }
+    if (nav.confirm) { sfx('ui_click'); startGame(C.MODES[i].id); }
   }
 
   function setSetting(key, v) {
@@ -9665,7 +9843,7 @@
 
   // ------------------------------------------------- interaction prompts
   function computePrompt() {
-    const p = P(), w = Game.world; if (!p || p.dead || p.molting || !w) return null;
+    const p = P(), w = Game.world; if (!p || p.dead || p.reviving || p.molting || !w) return null;
     const pr = p.radius || 8;
     // adult goals first
     const cr = Game.creatures;
@@ -9896,7 +10074,7 @@
     const t = real(), pulse = 0.5 + 0.5 * Math.sin(t * 5);
     let a = 0, rgb = '210,30,20';
     if (ui.flash > 0) a = Math.max(a, ui.flash * 0.6);
-    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
+    if (p && p.maxHp && p.hp / p.maxHp < 0.3 && !p.dead && !p.reviving) a = Math.max(a, 0.10 + 0.14 * pulse * (1 - p.hp / (p.maxHp * 0.3)) + 0.05);
     const danger = (Game.state && Game.state.danger) || 0;
     if (danger > 0.35) a = Math.max(a, (danger - 0.3) * 0.22 * (0.7 + 0.3 * pulse));
     if (a <= 0.01) return;
@@ -9905,6 +10083,8 @@
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
 
+  // height of the top-left stats panel (Brood mode has the Siblings row); the key guide sits just below it
+  const statsH = () => Game.state.mode === 'survival' ? 198 : 222;
   function hudKeyGuide(ctx) {
     const aim = !!Game.settings.mouseAim;
     const rows = [
@@ -9915,7 +10095,7 @@
       [['1', '2', '3', '4'], 'Select web'], [['E'], 'Interact'], [['R'], 'Rest'],
       [['B', 'M', 'F'], 'Codex / Map / Science'], [['H', 'Z', 'Esc'], 'Guide / Zoom / Pause'],
     ].filter(r => r[1]);
-    const x = 16, y = 226, w = 272, rh = 21, h = 32 + rows.length * rh;
+    const x = 16, y = 16 + statsH() + 12, w = 272, rh = 20, h = 32 + rows.length * rh;
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     spaced(ctx, 'KEY GUIDE', x + 16, y + 21, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
     rows.forEach((r, i) => {
@@ -9926,7 +10106,7 @@
   }
 
   function hudStats(ctx, p) {
-    const x = 16, y = 16, w = 272, h = 198, t = real();
+    const x = 16, y = 16, w = 272, h = statsH(), t = real();
     panel(ctx, x, y, w, h, { fill: COL.panelSoft });
     const st = p.stage || 0, last = st >= C.STAGES.length - 1;
     txt(ctx, stageName(st), x + 16, y + 29, { size: 19, weight: 700, font: SERIF, color: COL.amberHi });
@@ -9952,6 +10132,18 @@
       icon(ctx, m[0], x + 28, ry + 6, 17 * (1 + 0.16 * pulse), low ? U.mixColor('#ffb0a0', '#ff4a3a', pulse) : m[3]);
       bar(ctx, x + 48, ry, w - 48 - 56, 12, f, col, { border: low ? 'rgba(255,90,70,' + (0.5 + 0.5 * pulse) + ')' : null });
       txt(ctx, String(m[4]) + (i === 4 ? '/' + Math.round(p.maxSilk || 0) : ''), x + w - 16, ry + 6.5, { size: 12, weight: 600, color: low ? '#ff9a8a' : COL.text2, align: 'right', base: 'middle' });
+    }
+    // siblings: each one still with you is a revive (Brood mode only)
+    if (Game.state.mode !== 'survival') {
+      const cr = Game.creatures, left = (cr && cr.siblings) | 0, slots = (cr && cr.siblingsMax) || 5, sy = y + 202;
+      ctx.fillStyle = COL.lineSoft; ctx.fillRect(x + 16, sy - 9, w - 32, 1);
+      txt(ctx, 'Siblings', x + 16, sy + 8, { size: 12, weight: 600, color: COL.text3, base: 'middle' });
+      for (let i = 0; i < slots; i++) {
+        const sx = x + 90 + i * 24;
+        if (i < left) drawKind(ctx, 'kin', sx, sy + 8, 18);
+        else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy + 8, 5.5, 0, 7); ctx.stroke(); }
+      }
+      txt(ctx, left + (left === 1 ? ' revive' : ' revives'), x + w - 16, sy + 8, { size: 12, weight: 600, color: left > 0 ? COL.amberHi : COL.text3, align: 'right', base: 'middle' });
     }
     // status chips
     let cx = x, cy = y + h + 8;
@@ -10323,6 +10515,7 @@
   // ------------------------------------------------------------ sub panels
   function subPanelBox(sub) {
     if (sub === 'settings') return settingsLayout();
+    if (sub === 'mode') return modeLayout().b;
     if (sub === 'howto') return { x: (W - 900) / 2, y: 46, w: 900, h: 628 };
     return { x: (W - 680) / 2, y: 100, w: 680, h: 520 };
   }
@@ -10332,13 +10525,30 @@
     if (sub === 'confirmQuit') return drawConfirmQuit(ctx);
     const b = subPanelBox(sub);
     panel(ctx, b.x, b.y, b.w, b.h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
-    const title = { settings: 'Settings', howto: 'How to Play', credits: 'Credits' }[sub];
+    const title = { settings: 'Settings', mode: 'Choose your journey', howto: 'How to Play', credits: 'Credits' }[sub];
     txt(ctx, title, W / 2, b.y + 48, { size: 30, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.35)'; ctx.beginPath(); ctx.moveTo(b.x + 60, b.y + 62); ctx.lineTo(b.x + b.w - 60, b.y + 62); ctx.stroke();
     if (sub === 'settings') drawSettings(ctx, b);
+    else if (sub === 'mode') drawMode(ctx, b);
     else if (sub === 'howto') drawHowTo(ctx, b);
     else drawCredits(ctx, b);
-    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', true, { size: 17 });
+    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode', { size: 17 });
+  }
+
+  function drawMode(ctx, b) {
+    const L = modeLayout(), foc = ui.idx.mode || 0;
+    L.cards.forEach((r, i) => {
+      const m = C.MODES[i], f = i === foc, hard = m.id === 'survival', col = hard ? COL.bad : COL.amber;
+      panel(ctx, r.x, r.y, r.w, r.h, { fill: f ? 'rgba(34,24,14,0.96)' : 'rgba(18,13,9,0.8)', border: f ? col : COL.line, bw: f ? 2 : 1, r: 14 });
+      txt(ctx, m.name, r.x + 24, r.y + 46, { size: 30, font: SERIF, weight: 700, color: f ? COL.amberHi : COL.text });
+      txt(ctx, m.tag.toUpperCase(), r.x + r.w - 24, r.y + 42, { size: 11, weight: 700, color: col, align: 'right' });
+      // one life, plus a sibling icon per revive in Brood mode
+      icon(ctx, 'heart', r.x + 38, r.y + 100, 26, COL.hp);
+      if (!hard) { txt(ctx, '+', r.x + 66, r.y + 101, { size: 16, weight: 700, color: COL.text3, align: 'center', base: 'middle' }); for (let k = 0; k < 5; k++) drawKind(ctx, 'kin', r.x + 94 + k * 32, r.y + 100, 24); }
+      para(ctx, m.blurb, r.x + 24, r.y + 134, r.w - 48, { size: 15, lh: 22, color: COL.text });
+      txt(ctx, m.note, r.x + 24, r.y + r.h - 26, { size: 13, weight: 600, color: col });
+    });
+    txt(ctx, 'Left / Right to choose  \u00b7  Enter to begin  \u00b7  Esc to go back  \u00b7  your choice is remembered', W / 2, b.y + b.h - 86, { size: 12, color: COL.text3, align: 'center' });
   }
 
   function drawSettings(ctx, L) {
@@ -10415,7 +10625,7 @@
     if (ui.sub) { drawSub(ctx); ctx.restore(); return; }
     txt(ctx, 'Paused', W / 2, 172, { size: 54, font: SERIF, weight: 700, color: COL.amberHi, align: 'center', shadow: true });
     const p = P(), E = Game.edu;
-    const info = (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
+    const info = Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
     txt(ctx, info, W / 2, 208, { size: 15, color: COL.text2, align: 'center', font: SERIF, italic: true });
     ctx.strokeStyle = 'rgba(255,205,130,0.4)'; ctx.beginPath(); ctx.moveTo(W / 2 - 120, 226); ctx.lineTo(W / 2 + 120, 226); ctx.stroke();
     const rects = pauseRects(), foc = ui.idx.pause || 0;
@@ -10862,7 +11072,7 @@
     panel(ctx, bx, by, bw, L.ph, { fill: 'rgba(16,10,8,0.93)', border: 'rgba(229,96,77,0.4)', r: 18 });
     spaced(ctx, 'YOUR JOURNEY ENDS', W / 2, by + 44, 6, { size: 13, weight: 700, color: '#c98578', align: 'center' });
     txt(ctx, d.title, W / 2, by + 104, { size: 50, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center', shadow: true });
-    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time), W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    txt(ctx, 'Reached the ' + stageName(F.stage) + ' stage  \u00b7  survived ' + fmtTime(F.time) + '  \u00b7  ' + Game.modeInfo(Game.state.mode).name + ' mode', W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
     ctx.fillStyle = 'rgba(229,96,77,0.35)'; ctx.fillRect(bx + 80, by + 152, bw - 160, 1);
     para(ctx, d.flavor, bx + 70, by + L.flavorY, bw - 140, { size: 17, lh: 25, italic: true, font: SERIF, color: COL.text, align: 'center', maxLines: 3 });
     const sy = by + L.boxY;

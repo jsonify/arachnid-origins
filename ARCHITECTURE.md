@@ -51,6 +51,9 @@ Test injection: `Game.input.inject.keyDown('KeyW')`, `.keyUp`, `.click(x,y)`.
 | `growth:gain` | `{amount, total, needed}` | player |
 | `player:damaged` | `{amount, source}` | player |
 | `player:died` | `{cause}` (cause: `starved|dehydrated|eaten|exhausted|drowned|exposure|fell`) | player |
+| `player:downed` | `{cause, left}` a fatal blow landed but a sibling is giving its life instead of the spider dying (`left` = siblings still available after this one) | player |
+| `player:revived` | `{cause, left, total}` the sibling's gift landed and the spider is back up (`total` = revives this run) | player |
+| `kin:sacrifice` | `{creature, x, y, left}` a sibling has given its life (player.js listens) | creatures |
 | `player:ate` | `{kind, value, x, y}` | player |
 | `player:drank` | `{amount}` | player |
 | `player:rest` | `{on}` | player |
@@ -139,6 +142,8 @@ player.speedMul, biteMul, stealth (predator detection multiplier 0.3..1), damage
 player.hidden -> bool   // in shelter / retreat web / under cover & still => predators can't see you beyond ~radius*2
 player.resting -> bool, player.moltTimer (>0 while soft & vulnerable after molting; damage taken x2, speed x0.5), player.molting -> bool
 player.dead, player.deathCause
+player.reviving -> bool   // downed: a sibling is giving its life; hp 0 but not dead, can't be hurt, move, bite or spin until it lands
+player.revives            // revives used this run
 player.damage(amount, source) -> actual damage dealt (0 while invulnerable e.g. first 2 s after spawn/molt-start); emits player:damaged; kills -> player:died
 player.heal(n), player.feed(hunger, growth, kind), player.drink(n)
 player.bite() ; biting: hold J/left click; hits nearest edible creature in reach via Game.creatures.attackAt(x,y,r,dmg,by) (see creatures)
@@ -148,6 +153,8 @@ player.mate = { found:false, courted:false, laid:false }   // ending progress (a
 Rules: move with WASD (sprint drains energy), obstacles via `Game.world.resolve`. Meters: hunger/hydration drain per STAGES rates × `drainMul`; energy drains while sprinting, regens while resting (R, in shelter/retreat is 3x). Siblings huddled around a resting player (`creatures.huddle`, max 3) add +15% energy regen, +20% healing and -12% hunger/thirst drain each. Starving/dehydrated -> hp loss; hp regens when meters are healthy and resting. Rain damages small exposed spiders (`world.exposure`), being on the ground at night is riskier only through predators. Interact (E): drink near dew (`Game.world.nearestResource(x,y,'dew',radius+18)`) / nectar, enter/exit shelters, mate interactions. Eating: bite creature -> `Game.creatures.attackAt`; when a creature dies by player bite, creatures.js calls `Game.player.feed(hunger, growth, kind)` (value from KINDS). Growth from eating + `edu` objectives (`addGrowth`). Molt: at `growth >= growthNeeded` (and stage<4): `Game.setScene('molting')`, emit `molt:start`, ui shows the choice screen and calls `Game.player.chooseUpgrade(id)` -> then player plays a molt animation (~6 s, `moltTimer`, vulnerable), `stage+1`, `stage:change`, `molt:end`, `Game.camera.targetZoom = STAGES[stage].zoom`, silk/hp refill partially. Web spin availability is by `Game.C.STAGES[stage].webs`.
 Ending (stage 4): `Game.creatures.spawnMate()` is called by player.js on reaching adult; find the mate (glowing pheromone trail hint via `player.mateHint` vector shown by ui), press E near the mate with hunger>35 -> courtship mini-sequence (short dance, `courtship:done`), then go to an egg site (`world.shelters` with `eggSite`), press E to lay the egg sac -> `player.mate.laid=true`, emit `game:victory` and `Game.setScene('victory')`.
 Death: `Game.setScene('gameover')` after a brief death animation; ui offers retry.
+Game modes (`Game.C.MODES`, chosen on the title screen: New Game opens a "Choose your journey" picker; the last choice is saved in `Game.settings.mode` and highlighted next time; `Game.newGame(mode)` sets `Game.state.mode`, omitted = the saved one): **Brood** (default) has the sibling revive below; **Survival** is one life, and siblings still warn and huddle but never revive you. Survival hides the HUD Siblings row.
+Sibling revive (Brood mode only): a fatal blow (`die()`) first asks `Game.creatures.claimSibling(x, y)` for a sibling. If one answers, the spider is *downed* instead (`player.reviving`, `player:downed`; no `player:died`). The sibling runs in, settles on the spider and gives its life (`kin:sacrifice`); the spider then gets up with 50% health, hunger/hydration/energy lifted to at least 35 (so a death by starvation doesn't repeat) and 4 s of invulnerability (`player:revived`), and hunters next to it are startled off. 1 sibling = 1 revive; with none left the next fatal blow is a real death. Tuning: `REVIVE_*` at the top of player.js, `SAC_*` in creatures.js. Siblings are a finite pool (5 at hatching, `updateKinCount` lets them drift away as you grow: 4/3/1/0), so revives run out on their own.
 Camera: set `Game.camera.targetZoom` per stage; camera target = player.
 
 ### D. `Game.creatures` (creatures.js) — priority 40
@@ -169,6 +176,9 @@ creatures.inRadius(x, y, r, filterFn?) -> array (reuse a scratch array is ok; do
 creatures.spawnMate() -> creature ; creatures.mate -> creature|null
 creatures.visibleKinds -> Set of kinds the player has seen (also emit creature:seen)
 creatures.alarms -> [{id, kind, x, y, life}]        // sibling lookouts: a hunter that would go for the player was spotted (up to 260 px from a sibling, ~4 s memory). ui.js draws an edge-of-screen arrow for off-screen ones; each live alarm also floors Game.state.danger at 0.4. Emits `kin:alarm {kind,x,y}` when a new one is raised
+creatures.siblings -> int                         // siblings still with the player (alive, not drifting away, not already giving their life) = revives left; creatures.siblingsMax = how many hatch with you (5)
+creatures.claimSibling(x, y) -> creature|null     // player.js: the nearest such sibling is claimed to give its life (null = none left). A claimed sibling is hidden from hunters and can't be hurt, so the revive always completes
+creatures.startle(x, y, r) -> n                   // hunters within r flee for a few seconds and won't re-engage straight away (used when a sibling's gift lands)
 creatures.huddle -> 0..3                            // siblings tucked in around the resting player. player.js (HUDDLE_* constants) turns that into faster energy/health recovery and slower hunger/thirst drain; `player.huddled` mirrors it
 ```
 AI: prey wander/graze/flee (flee from player if `dist < detection * player.stealth` and player not hidden), predators patrol/hunt the player when within `detection * player.stealth` (hidden players are found only when within ~radius*2 or via `player.senseRadius` for the player only), attack deals damage via `Game.player.damage()` and sets `Game.state.danger`. Predators dislike webs (they may break them) but small predators get stuck. Birds: telegraphed shadow that drifts over exposed ground (`world.exposure>0.6`) then strikes; being covered saves you. Population: maintain target counts per zone/time-of-day by despawning far-offscreen creatures and respawning at world.spawnPoints out of view. Balanced difficulty: hatchling zone has springtails/mites/midges plentiful and only slow, distant threats; danger ramps by stage and zone (bark = ants/centipedes, garden = wasps/mantis/birds). Creatures use `Game.world.resolve` for obstacle avoidance.
