@@ -633,7 +633,7 @@
       if (st === 4 && p.mate && p.mate.found && !p.mate.courted) return 'Press E next to the mate to court. You need hunger above 35%.';
       if (st === 4 && p.mate && p.mate.courted && !p.mate.laid) return 'Find a hidden egg site (a hollow or shelter) and press E to lay your egg sac.';
       if (Game.world && Game.world.isNight && Game.world.isNight() && t > 20) { return 'Night: darker, and some predators are more active. Vibration Sense shows nearby creatures.'; }
-      if (t < 120 && cr && cr.siblings > 0) return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
+      if (t < 120 && cr && cr.siblings > 0 && Game.state.mode !== 'survival') return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
       if (t < 90 && !f.hidden) return 'Predators track movement. Press R while hidden to rest and recover.';
       if (t < 150) return 'Press B to open your Codex, and F for Science Mode.';
       return '';

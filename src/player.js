@@ -232,7 +232,7 @@
 
   // a sibling is still around: go down instead of dying; reviveUpdate() keeps the spider down until the sibling's gift lands
   function beginRevive(cause) {
-    const cr = Game.creatures; if (!has(cr, 'claimSibling')) return false;
+    const cr = Game.creatures; if (!has(cr, 'claimSibling') || Game.state.mode === 'survival') return false;   // Survival mode: one life
     let sib = null;
     try { sib = cr.claimSibling(P.x, P.y); } catch (e) { Game.reportError('player.revive', e); }
     if (!sib) return false;
