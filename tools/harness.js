@@ -2,6 +2,7 @@
  *
  *   node tools/harness.js [seconds=20] [--shots]
  *
+ * Options for load(): { tolerant, verbose, store (shared localStorage object), globals (extra globals such as indexedDB) }.
  * Programmatic use (from your own test script):
  *   const H = require('./harness');
  *   const Game = H.load();                 // loads every src/*.js in load order into a vm context, boots the game
@@ -15,14 +16,14 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const { createCanvas } = require(path.join(__dirname, '..', 'node_modules', '@napi-rs', 'canvas'));
 const SRC = path.join(__dirname, '..', 'src');
-const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'boss', 'edu', 'audio', 'ui'];
+const ORDER = ['core', 'world', 'webs', 'player', 'creatures', 'boss', 'edu', 'territory', 'save', 'audio', 'ui'];
 const SHOTS = path.join(__dirname, 'shots');
 let ctxG = null, canvas = null, Game = null;
 
 function load(opts) {
   opts = opts || {};
   canvas = createCanvas(1280, 720);
-  const store = {};
+  const store = opts.store || {};   // opts.store: share a localStorage between instances (tests that "reload the browser")
   const sandbox = {
     console, Math, Date, JSON, Object, Array, Set, Map, WeakMap, Uint8Array, Uint8ClampedArray, Uint16Array, Uint32Array, Int32Array, Float32Array, Float64Array, Number, String, Boolean, Symbol, Error, RegExp, Promise, parseInt, parseFloat, isNaN, isFinite,
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -34,6 +35,7 @@ function load(opts) {
     },
     requestAnimationFrame: () => 0,
   };
+  Object.assign(sandbox, opts.globals || {});   // opts.globals: extra globals, e.g. a fake indexedDB
   sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
   ctxG = vm.createContext(sandbox);
   ORDER.forEach(n => {

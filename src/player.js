@@ -28,6 +28,8 @@
   // life, and the spider gets up with REVIVE_HP of its health, meters topped up to REVIVE_METER and REVIVE_INVULN s of grace. 1 sibling = 1 revive.
   const REVIVE_HP = 0.5, REVIVE_METER = 35, REVIVE_INVULN = 4;
   const REVIVE_MAX = 4;       // longest the spider stays down waiting for the gift (s); the sibling normally arrives well before
+  // Territory (territory.js): after a fatal blow an heir takes over with a Setback (SETBACK_* in territory.js); "shaken" is -15% speed for a while
+  const SHAKEN_MUL = 0.85;
 
   // ---- art constants ----------------------------------------------------------
   // leg attachment points (x, |y|) on the cephalothorax in units of body radius, splay angles, lengths
@@ -78,6 +80,7 @@
     // extras (documented in the report)
     interactHint: '', inShelter: null, exhausted: false, sprinting: false, silkMul: 1, huddled: 0,
     invuln: 0, offers: [], moltPhase: 'none', soft: 0, eggSac: null, courting: false, laying: false, hatching: false,
+    shaken: 0,   // Territory: seconds of "shaken" left after an heir takes over (-15% speed)
   };
   Game.player = P;   // available immediately for modules loaded later
 
@@ -107,7 +110,7 @@
       case 'starvation': return 'starved';
       case 'dehydration': return 'dehydrated';
       case 'exhaustion': return 'exhausted';
-      case 'rain': case 'exposure': return 'exposure';
+      case 'rain': case 'frost': case 'exposure': return 'exposure';
       case 'drowned': case 'fell': return src;
       case 'widow': return 'widow';   // the Widow Matriarch boss
       default: return 'eaten';
@@ -135,11 +138,15 @@
   };
 
   P.reset = function () {
-    const sp = C.SPAWN;
+    const T = Game.territory, tsp = (T && T.active && T.spawnPoint) ? T.spawnPoint() : null;   // Territory: hatch at the Home Site
+    const sp = tsp || C.SPAWN;
     this.x = sp.x; this.y = sp.y; this.vx = 0; this.vy = 0; this.angle = -0.6; prevAng = this.angle;
     this.stage = 0; this.stageInfo = C.STAGES[0]; this.radius = C.STAGES[0].radius;
     this.species = Game.speciesInfo(Game.state.species); this.tangleT = 0; this.tangleMul = 1; bellyK = 0;
     this.upgrades = {}; C.UPGRADES.forEach(u => { this.upgrades[u.id] = 0; });
+    const inh = (T && T.active && T.inherited) ? T.inherited() : null;   // Territory: traits the mother passed on (one level below hers)
+    if (inh) C.UPGRADES.forEach(u => { if (inh[u.id] > 0) this.upgrades[u.id] = clamp(Math.floor(inh[u.id]), 0, u.max); });
+    this.shaken = 0;
     this.maxHp = 0; this.maxSilk = 0; this.hp = 0; this.silk = 0;
     this.applyUpgrades(false);
     this.hp = this.maxHp; this.silk = this.maxSilk;
@@ -256,7 +263,7 @@
 
   // a sibling is still around: go down instead of dying; reviveUpdate() keeps the spider down until the sibling's gift lands
   function beginRevive(cause) {
-    const cr = Game.creatures; if (!has(cr, 'claimSibling') || Game.state.mode === 'survival') return false;   // Survival mode: one life
+    const cr = Game.creatures; if (!has(cr, 'claimSibling') || Game.state.mode === 'survival' || Game.state.mode === 'territory') return false;   // Survival: one life; Territory: succession instead (territory.js)
     let sib = null;
     try { sib = cr.claimSibling(P.x, P.y); } catch (e) { Game.reportError('player.revive', e); }
     if (!sib) return false;
@@ -368,6 +375,7 @@
     const cr = Game.creatures;
     if (!has(cr, 'spawnMate')) return;
     if (cr.mate) return;
+    const T = Game.territory; if (T && T.active && T.mateAllowed && !T.mateAllowed()) return;   // Territory: the mating season has not opened yet
     try { cr.spawnMate(); } catch (e) { Game.reportError('player.spawnMate', e); }
   }
 
@@ -457,9 +465,16 @@
     if (Math.random() < dt * 10) addParticle('spark', P.eggSac.x + (Math.random() - 0.5) * P.radius, P.eggSac.y + (Math.random() - 0.5) * P.radius, (Math.random() - 0.5) * 12, -8 - Math.random() * 10, 1.1, 0.7, '#fff7e0', 0);
     if (layT >= LAY_T + 0.9 && !victoryFired) {
       victoryFired = true; P.laying = false; P.ending = true;
-      Game.state.victory = true; stat('victory');
-      Game.emit('game:victory'); sfx('victory', 1);
-      Game.setScene('victory');
+      const T = Game.territory; let handled = false;
+      if (T && T.active && T.onLaid) {   // Territory: the egg sac starts the next generation (Legacy scene) instead of ending the game
+        try { handled = !!T.onLaid(layTarget); } catch (e) { Game.reportError('player.onLaid', e); }
+        if (handled) { stat('laid'); sfx('victory', 1); }
+      }
+      if (!handled) {
+        Game.state.victory = true; stat('victory');
+        Game.emit('game:victory'); sfx('victory', 1);
+        Game.setScene('victory');
+      }
     }
   }
 
@@ -470,8 +485,35 @@
     moveBy(P.vx * dt, P.vy * dt);
     curl = Math.min(1.15, curl + dt * 1.1);
     tickGait(dt, 0);
-    if (deathT >= DEATH_T && sceneIs('playing')) Game.setScene('gameover');
+    if (deathT >= DEATH_T && sceneIs('playing')) Game.setScene(deathScene());
   }
+
+  // the screen that follows a death: Game Over, or in Territory the Succession card (an heir takes over) / Lineage Ended (no heirs left)
+  function deathScene() {
+    const T = Game.territory;
+    if (T && T.active && T.deathScene) { try { return T.deathScene(P.deathCause) || 'gameover'; } catch (e) { Game.reportError('player.deathScene', e); } }
+    return 'gameover';
+  }
+  // Territory succession: a new body (an heir) takes over at `pt` {x,y}. Same stage, same molt upgrades; the Setback (territory.js passes the numbers):
+  // part of the progress to the next molt is lost, meters restart, silk is empty, and the spider is shaken for a while.
+  P.respawnHeir = function (pt, o) {
+    o = o || {};
+    const w = world();
+    this.dead = false; this.deathCause = null; this.reviving = false; deathT = 0; curl = 0; flash = 0; dotBuf = 0; exhaustedFlag = false; exhaustT = 0; this.exhausted = false;
+    let x = pt && isFinite(pt.x) ? pt.x : this.x, y = pt && isFinite(pt.y) ? pt.y : this.y;
+    if (has(w, 'resolve')) { try { const r = w.resolve(x, y, this.radius); if (r && isFinite(r.x) && isFinite(r.y)) { x = r.x; y = r.y; } } catch (e) { /* ignore */ } }
+    this.x = x; this.y = y; this.vx = this.vy = 0; lastGood.x = x; lastGood.y = y;
+    this.hp = this.maxHp;
+    const m = num(o.meter, 50); this.hunger = this.hydration = this.energy = m; this.silk = num(o.silk, 0);
+    if (this.stage < 4) this.growth *= (1 - num(o.growthLoss, 0.5));
+    this.shaken = num(o.shaken, 0); this.invuln = num(o.invuln, 4);
+    this.resting = false; this.inShelter = null; this.courting = false; this.laying = false; this.stateLabel = 'walking'; this.sprinting = false; this.tangleT = 0; this.tangleMul = 1;
+    exuvia = null; trail.length = 0; parts.length = 0; snapFeet(); reviveGlow = 1;
+    Game.camera.targetZoom = this.stageInfo.zoom; Game.camera.snap();
+    for (let i = 0; i < 16; i++) addParticle('spark', x + (Math.random() - 0.5) * this.radius * 2, y + (Math.random() - 0.5) * this.radius * 2, (Math.random() - 0.5) * 26, -8 - Math.random() * 20, 1.0 + Math.random() * 0.8, 0.6 + Math.random() * 0.8, '#ffe6a0', 0);
+    Game.emit('player:respawned', { x, y });
+    return this;
+  };
 
   // ---- movement ------------------------------------------------------------------------------------------------
   function moveBy(dx, dy) {
@@ -512,6 +554,7 @@
     if (P.molting || P.moltTimer > 0) mod *= 0.5;
     if (exhaustedFlag) mod *= 0.62;
     if (P.tangleT > 0) mod *= P.tangleMul;
+    if (P.shaken > 0) mod *= SHAKEN_MUL;
     if (P.hunger < 12) mod *= 0.9;
     if (has(w, 'speedBonusAt')) { try { mod *= clamp(num(w.speedBonusAt(P.x, P.y), 1), 1, 2.5); } catch (e) { /* ignore */ } }
     if (sprint) mod *= SPRINT_MUL;
@@ -623,6 +666,13 @@
         if (held) return;
       }
     }
+    // --- Territory: heirloom webs, wrapping prey for the pantry, recycling silk
+    const ter = Game.territory;
+    if (ter && ter.active && ter.interact) {
+      let used = false;
+      try { used = ter.interact(pressed, held, dt); } catch (e) { Game.reportError('player.territory', e); }
+      if (used) return;
+    }
     // --- shelters
     const sh = nearestShelter();
     if (P.inShelter) {
@@ -644,8 +694,9 @@
     const cr = Game.creatures, huddled = (P.resting && cr) ? num(cr.huddle, 0) : 0;
     P.huddled = huddled;
     const k = P.drainMul * (P.resting ? 0.5 * (1 - HUDDLE_DRAIN * huddled) : sprinting ? 1.8 : moving ? 1.15 : 1);
-    P.hunger = clamp(P.hunger - si.hungerRate * k * dt, 0, 100);
-    P.hydration = clamp(P.hydration - si.thirstRate * k * dt, 0, 100);
+    const ter = Game.territory, tm = (ter && ter.active && ter.metab) ? ter.metab : null;   // Territory: the season changes how fast you get hungry and thirsty
+    P.hunger = clamp(P.hunger - si.hungerRate * k * (tm ? tm.hunger : 1) * dt, 0, 100);
+    P.hydration = clamp(P.hydration - si.thirstRate * k * (tm ? tm.thirst : 1) * dt, 0, 100);
     // energy
     if (sprinting) P.energy -= SPRINT_DRAIN * dt;
     else if (P.hunger <= 0) P.energy -= si.energyRate * 2 * dt;       // starving: no recovery
@@ -665,9 +716,16 @@
       const kk = P.stage === 0 ? 0.022 : P.stage === 1 ? 0.016 : 0.006;
       if (e > 0.25) dot(P.maxHp * kk * num(w.weather.intensity, 0.5) * e * dt, 'rain', dt);
     }
+    // a cold snap hurts small spiders left in the open, much like rain does
+    if (w && w.weather && w.weather.type === 'frost' && P.stage <= 3 && !P.inShelter && !sheltered && has(w, 'exposure')) {
+      let e = 0; try { e = num(w.exposure(P.x, P.y), 0); } catch (er) { e = 0; }
+      const kk = P.stage === 0 ? 0.03 : P.stage === 1 ? 0.022 : P.stage === 2 ? 0.014 : 0.007;
+      if (e > 0.25) dot(P.maxHp * kk * num(w.weather.intensity, 0.5) * e * dt, 'frost', dt);
+    }
     // healing: resting while fed/watered (x3 in shelter), faint passive recovery when thriving
     if (P.hp < P.maxHp) {
-      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * (1 + HUDDLE_HEAL * huddled) * dt);
+      const wm = (ter && ter.active && ter.healMul) ? ter.healMul() : 1;   // Territory winter: a silk retreat heals faster
+      if (P.resting && P.hunger > 40 && P.hydration > 40) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.025 * (sheltered ? 3 : 1) * wm * (1 + HUDDLE_HEAL * huddled) * dt);
       else if (P.hunger > 60 && P.hydration > 60) P.hp = Math.min(P.maxHp, P.hp + P.maxHp * 0.002 * dt);
     }
     // silk
@@ -706,6 +764,7 @@
     if (P.tangleT > 0) { P.tangleT = Math.max(0, P.tangleT - dt); if (P.tangleT <= 0) P.tangleMul = 1; }
     bellyK += (((spinT > 0 || P.resting) ? 1 : 0) - bellyK) * (1 - Math.exp(-5 * dt));
     if (P.moltTimer > 0) P.moltTimer = Math.max(0, P.moltTimer - dt);
+    if (P.shaken > 0) P.shaken = Math.max(0, P.shaken - dt);
     P.soft = P.molting ? 1 : (P.moltTimer > 0 ? 0.85 * P.moltTimer / MOLT_SOFT : 0);
     if (!P.molting) shiver *= Math.exp(-6 * dt);
     let sp = 0, mScale = 1, moving = false, sprint = false;
@@ -893,7 +952,7 @@
   P.update = function (dt) {
     dt = Math.min(dt, 0.05);
     const sc = Game.state.scene;
-    if (sc === 'paused' || sc === 'codex') return;
+    if (sc === 'paused' || sc === 'codex' || sc === 'territory') return;
     if (!Game.camera.target) Game.camera.target = P;
     anim += dt;
     flash = Math.max(0, flash - dt * 2.2); bitePhase = Math.max(0, bitePhase - dt * 4.5);
@@ -904,9 +963,55 @@
     if (exuvia) { exuvia.t += dt; if (exuvia.t > 80) exuvia = null; }
     if (sc === 'playing') simulate(dt);
     else if (sc === 'molting') chooseUpdate(dt);
-    else if (sc === 'gameover') { deathT += dt; curl = Math.min(1.15, curl + dt); tickGait(dt, 0); updateRadius(dt); }
-    else if (sc === 'victory') { if (P.eggSac) P.eggSac.t = 1; tickGait(dt, 0); }
+    else if (sc === 'gameover' || sc === 'succession' || sc === 'lineageended') { deathT += dt; curl = Math.min(1.15, curl + dt); tickGait(dt, 0); updateRadius(dt); }
+    else if (sc === 'victory' || sc === 'legacy') { if (P.eggSac) P.eggSac.t = 1; tickGait(dt, 0); }
     else { updateRadius(dt); tickGait(dt, 0); }
+  };
+
+  // ---- Territory: saving ---------------------------------------------------------------------------------------------------------------------------
+  // serialize() is a plain JSON-safe slice, deserialize(d) restores it after reset(). A save can land mid-molt or mid-laying (a suspend snapshot is the
+  // exact moment), so those two carry their timers; courting is simply cancelled (press E at the mate again).
+  const rdn = (v, n) => { const k = Math.pow(10, n || 0); return Math.round(v * k) / k; };
+  P.serialize = function () {
+    const d = {
+      x: rdn(this.x, 1), y: rdn(this.y, 1), angle: rdn(this.angle, 3), stage: this.stage, hp: rdn(this.hp, 1), hunger: rdn(this.hunger, 1), hydration: rdn(this.hydration, 1), energy: rdn(this.energy, 1),
+      silk: rdn(this.silk, 1), growth: rdn(this.growth, 1), upgrades: Object.assign({}, this.upgrades), mate: { found: !!this.mate.found, courted: !!this.mate.courted, laid: !!this.mate.laid },
+      moltTimer: rdn(this.moltTimer, 1), shaken: rdn(this.shaken, 1), species: this.species && this.species.id, shelter: this.inShelter ? this.inShelter.id : null,
+    };
+    if (this.molting && this.moltPhase === 'anim') d.molt = { t: rdn(moltT, 2), pending: pendingStage, swapped: !!swapped };
+    if (this.laying) d.lay = { t: rdn(layT, 2), site: layTarget ? layTarget.id : null };
+    if (this.ending) d.ending = true;
+    return d;
+  };
+  P.deserialize = function (d) {
+    if (!d || typeof d !== 'object') return;
+    const n = (v, def) => (typeof v === 'number' && isFinite(v)) ? v : def;
+    const w = world();
+    this.stage = clamp(Math.floor(n(d.stage, 0)), 0, C.STAGES.length - 1); this.stageInfo = C.STAGES[this.stage]; this.radius = this.stageInfo.radius;
+    C.UPGRADES.forEach(u => { this.upgrades[u.id] = clamp(Math.floor(n(d.upgrades && d.upgrades[u.id], 0)), 0, u.max); });
+    this.applyUpgrades(false);
+    this.x = clamp(n(d.x, this.x), 0, C.WORLD_W); this.y = clamp(n(d.y, this.y), 0, C.WORLD_H); this.vx = this.vy = 0; this.angle = n(d.angle, this.angle); prevAng = this.angle;
+    this.hp = clamp(n(d.hp, this.maxHp), 1, this.maxHp); this.hunger = clamp(n(d.hunger, 80), 0, 100); this.hydration = clamp(n(d.hydration, 80), 0, 100); this.energy = clamp(n(d.energy, 100), 0, 100);
+    this.silk = clamp(n(d.silk, 0), 0, this.maxSilk); this.growth = Math.max(0, n(d.growth, 0)); this.growthNeeded = this.stageInfo.growthNeeded;
+    if (d.mate && typeof d.mate === 'object') this.mate = { found: !!d.mate.found, courted: !!d.mate.courted, laid: !!d.mate.laid };
+    this.moltTimer = Math.max(0, n(d.moltTimer, 0)); this.shaken = Math.max(0, n(d.shaken, 0));
+    this.dead = false; this.reviving = false; this.hatching = false; this.resting = false; this.courting = false; this.laying = false; this.molting = false; this.moltPhase = 'none'; this.ending = false;
+    this.invuln = 2.5; this.inShelter = null; this.stateLabel = 'walking'; this.eggSac = null; sac = null; exuvia = null; trail.length = 0; parts.length = 0;
+    if (d.shelter && w && w.shelters) { for (let i = 0; i < w.shelters.length; i++) if (w.shelters[i].id === d.shelter) { this.inShelter = w.shelters[i]; break; } }
+    Game.camera.targetZoom = this.stageInfo.zoom; Game.camera.zoom = this.stageInfo.zoom; Game.camera.target = this;
+    snapFeet(); lastGood.x = this.x; lastGood.y = this.y;
+    if (d.molt && typeof d.molt === 'object') {   // mid-molt (the choice was already made): the animation carries on
+      this.molting = true; this.moltPhase = 'anim'; moltT = Math.max(0, n(d.molt.t, 0)); pendingStage = clamp(Math.floor(n(d.molt.pending, this.stage + 1)), 1, 4); swapped = !!d.molt.swapped;
+      this.invuln = Math.max(this.invuln, 2); this.stateLabel = 'molting';
+    }
+    if (d.lay && typeof d.lay === 'object' && this.stage >= 4) {   // mid-laying: she finishes laying the sac
+      this.laying = true; this.mate.laid = true; layT = Math.max(0, n(d.lay.t, 0)); layTarget = null;
+      if (w && w.shelters) for (let i = 0; i < w.shelters.length; i++) if (w.shelters[i].id === d.lay.site) layTarget = w.shelters[i];
+      this.eggSac = { x: this.x - Math.cos(this.angle) * this.radius * 3.4, y: this.y - Math.sin(this.angle) * this.radius * 3.4, t: clamp(layT / LAY_T, 0, 1), r: this.radius * 1.5 };
+      victoryFired = false;
+    }
+    if (d.ending) { this.ending = true; this.mate.laid = true; victoryFired = true; this.eggSac = { x: this.x - Math.cos(this.angle) * this.radius * 3.4, y: this.y - Math.sin(this.angle) * this.radius * 3.4, t: 1, r: this.radius * 1.5 }; }
+    if (!this.molting && this.stage < 4 && this.growth >= this.growthNeeded) startMolt();   // a molt that was due when the game was saved
   };
 
   // ---- debug helper ------------------------------------------------------------------------------------------------------------------------------

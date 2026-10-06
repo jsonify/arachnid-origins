@@ -164,8 +164,10 @@ H.shot('species_codex_widow');
 lock(); G.ui.codex.ssel = 1; H.run(0.3);
 ok(has(/^Spiders\s+1\/2$/) && hasSpaced('HOW TO UNLOCK') && has(/Defeat the Widow Matriarch/) && !hasSpaced('PERKS AND TRADE-OFFS'), 'a locked spider shows how to unlock it instead of its perks');
 H.shot('species_codex_locked');
+H.press('Tab'); ok(G.ui.codex.tab === 5, 'Tab moves on to the Lineage tab (the last one)');
 H.press('Tab'); ok(G.ui.codex.tab === 0, 'Tab wraps past the last tab');
-H.press('KeyQ'); ok(G.ui.codex.tab === 4, 'Q goes back to the Spiders tab');
+H.press('KeyQ'); ok(G.ui.codex.tab === 5, 'Q goes back to the Lineage tab');
+H.press('KeyQ'); ok(G.ui.codex.tab === 4, 'and again to the Spiders tab');
 G.setScene('title');
 
 ok(G.errors.length === 0, 'no errors (' + G.errors.length + ')' + (G.errors.length ? ' ' + G.errors[0].where + ': ' + G.errors[0].message : ''));

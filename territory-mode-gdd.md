@@ -1,6 +1,6 @@
 # Arachnid Origins: Territory Mode - Game Design Document
 
-**Status:** Draft v0.1 (2026-10-05)
+**Status:** Draft v0.1 (2026-10-05). All five milestones are implemented in v1.2.0; section 14 lists what was built and where it departs from this draft.
 **Companion documents:** `GDD.md` (overall design), `ARCHITECTURE.md` (module contract). This document only covers what Territory adds or changes. Anything not mentioned here behaves as in the base game.
 
 ---
@@ -403,3 +403,30 @@ Extend `tools/harness.js`:
 3. Should heirs be able to choose a different species from the Unlocked list for a new generation?
 4. Should the Brood-mode sibling revive ever return as an optional Territory difficulty setting?
 5. Is a hibernation fast-forward (skip winter from a retreat web) wanted for players who are still alive in winter?
+
+---
+
+## 14. Implementation Notes (v1.2.0)
+
+What was built, by milestone, and where the implementation departs from the draft above. The code is the reference for exact numbers: the tuning constants sit at the top of `src/territory.js` and `src/save.js`. The module contracts are in `ARCHITECTURE.md` (sections G and H).
+
+### 14.1 What was built
+- **M1, save core:** `src/save.js`. Three slots, three kinds (`autosave`, `manual`, `suspend`), a safe write (temporary key, read-back, `.bak`, real key), an FNV-1a checksum, a schema number with a migration chain, `.aosave` export/import, one tab per slot, Hall of Lines, Continue / Load Game / Welcome back card. Every module that has state to keep gained optional `serialize()` / `deserialize(data)`.
+- **M2, calendar and seasons:** `src/territory.js`. A 36-day year read from `world.dayCount`; season effects on prey and flyers, birds, hunger and thirst, weather odds, a new `frost` weather, winter healing in a retreat, and the day-16 mating gate. Calendar chip and season banners in the HUD.
+- **M3, territory persistence:** the Home Site and its Claim, Claim Points and the five Ranks, heirloom webs (mark, repair, recycle, exempt from the web cap), the pantry (wrap, freshness by season, eating by resting in the retreat), the Territory screen (T).
+- **M4, generations:** succession with the Setback, the Lineage Ended screen, "Found a New Line", the three-step Legacy scene (her story, inherited traits, winter), clutch size, inheritance one level below the mother's, 15% mutation, the Lineage tab in the Codex.
+- **M5, events and polish:** the summer rival, ten new facts and seven Territory goals, the Welcome back card, export/import. The tuning values are the draft's starting points; no playtest pass has been done yet.
+
+### 14.2 Departures from the draft
+1. **World determinism (13.1).** The world was already deterministic (a fixed `SEED`), so the save stores the seed and refuses a mismatch instead of re-seeding. Only what changes is saved: the clock, weather, resource amounts and the explored map.
+2. **Synchronous save API.** `Game.save` works on an in-memory cache and writes to IndexedDB (localStorage, then memory, as fallbacks) behind it, so the title can draw slot cards immediately and nothing in the game loop waits on storage. `save:written` fires when a snapshot is durably stored.
+3. **Heirs are the clutch.** The heirs waiting after a Legacy scene are that clutch's size (3 + pantry + condition + rank bonus, scaled by how late she laid); a brand-new lineage starts with five.
+4. **The Widow Matriarch stays gone** once beaten (open question 13.2.1): her defeat is permanent for the player, as in the other modes, and her empty lair remains.
+5. **No reprieve and no species swap** (13.2.2, 13.2.3): a broken line goes to the Hall of Lines and "Found a New Line" keeps the same species. No hibernation fast-forward (13.2.5); the winter turnover only happens through the Legacy scene. Brood's revive does not return as a setting (13.2.4).
+6. **Territory goals live in `edu.js`**, next to the survival objectives, rather than in territory.js. They pay Claim Points through `territory.addCP`.
+7. **The turnover always runs to spring.** `season:change {season: 'spring', prev: 'winter'}` fires when the next generation hatches whatever the day she laid, so "Survive your first winter" completes at the first Legacy scene.
+8. **A new lineage clears its slot** (its Hall of Lines stays) as soon as it starts, so an old suspend save can never outrank the new lineage.
+9. **Mid-action saves.** A molt or egg-laying in progress is saved and resumed; a boss fight is saved as dormant (she resets, as when the player flees). Nothing is written while the Succession card or the Lineage Ended screen is up.
+
+### 14.3 Tests
+`tools/test_save.js`, `tools/test_seasons.js`, `tools/test_territory.js`, `tools/test_generations.js`, `tools/test_territory_ui.js` (see `ARCHITECTURE.md`, Testing). `tools/test_modes.js` and `tools/test_species.js` were updated for the third mode card and the sixth Codex tab.

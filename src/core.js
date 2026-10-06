@@ -10,9 +10,16 @@
 
   // ---------------------------------------------------------------- constants
   const C = Game.C = {
-    VERSION: '1.1.0',           // shown on the title and pause screens; keep in step with package.json and CHANGELOG[0] (tools/check_version.js checks)
+    VERSION: '1.2.0',           // shown on the title and pause screens; keep in step with package.json and CHANGELOG[0] (tools/check_version.js checks)
     // newest first; shown in Settings > Changelog. Add an entry with `node tools/bump.js <major|minor|patch> "what changed"`
     CHANGELOG: [
+      { version: '1.2.0', date: '2026-10-06', notes: [
+        'New journey: Territory. Claim a home site, spin heirloom webs that last, stock a pantry for the lean months and live through a 36-day year of four seasons.',
+        'When your spider falls an heir takes her place; lay your egg sac to hand traits down to the next generation, and keep the line going for as long as you can.',
+        'Three save slots with autosave, manual save and suspend, Continue and Load Game, and saves you can export and import as files.',
+        'Seasons change the world: summer brings prey and rivals who raid your webs, autumn brings fog and the mating season, winter brings frost and scarcity.',
+        'Rise from a Claim to a Dominion by earning Claim Points. New Codex facts, a Lineage tab and Territory goals.',
+      ] },
       { version: '1.1.0', date: '2026-10-05', notes: [
         'Added this Changelog, in Settings.',
         'Fixed the "Catch a flying insect in a web" objective, which never completed when a flyer was caught.',
@@ -30,9 +37,11 @@
     // Game modes, chosen on the title screen (New Game) and remembered in Game.settings.mode. The first one is the default.
     //   brood:    siblings give their lives to revive you (1 sibling = 1 revive)
     //   survival: one life; siblings still warn you and huddle, but cannot save you
+    //   territory: a persistent, saved campaign over many generations (territory.js, save.js); heirs replace sibling revives
     MODES: [
       { id: 'brood',    name: 'Brood',    tag: 'Default', blurb: 'Your siblings have your back. If you would die, a sibling gives its life to bring you back: one sibling, one revive. They also warn you of predators and huddle in while you rest.', note: 'Up to 5 revives, fewer as siblings drift away.' },
       { id: 'survival', name: 'Survival', tag: 'Hard',    blurb: 'One life, no second chances. Your siblings still warn you of predators and huddle in while you rest, but they cannot save you. When you die, the journey is over.', note: 'No revives.' },
+      { id: 'territory', name: 'Territory', tag: 'Saves',  blurb: 'A home that remembers. Claim a site, spin heirloom webs, stock a pantry and live through the seasons. When you fall an heir takes your place; when you lay your egg sac the next generation hatches into the territory you built.', note: 'Saves in 3 slots. Ends only if the line dies out.' },
     ],
     // Playable spiders. The first one is the starter and is always available; the others are locked until Game.unlocks.unlock(id)
     // (the Widow Matriarch boss unlocks the Black Widow). A species is data: `mods` multiply the stage stats (see player.applyUpgrades),
@@ -87,7 +96,7 @@
       up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
       sprint: ['ShiftLeft', 'ShiftRight'], spin: ['Space'], bite: ['KeyJ'], interact: ['KeyE'], rest: ['KeyR'],
       web1: ['Digit1'], web2: ['Digit2'], web3: ['Digit3'], web4: ['Digit4'],
-      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'], guide: ['KeyH'],
+      map: ['KeyM'], codex: ['KeyB'], science: ['KeyF'], zoomOut: ['KeyZ'], guide: ['KeyH'], territory: ['KeyT'], recycle: ['KeyX'],
       pause: ['Escape', 'KeyP'], confirm: ['Enter', 'Space'], back: ['Escape', 'Backspace'],
       menuUp: ['ArrowUp', 'KeyW'], menuDown: ['ArrowDown', 'KeyS'], menuLeft: ['ArrowLeft', 'KeyA'], menuRight: ['ArrowRight', 'KeyD'],
       tabNext: ['Tab', 'KeyE'], tabPrev: ['KeyQ'],
@@ -134,6 +143,25 @@
     // Create an offscreen canvas (works in browser and in the headless test harness).
     makeCanvas: (w, h) => { const c = (root.document && root.document.createElement) ? root.document.createElement('canvas') : null; if (c) { c.width = w; c.height = h; } return c; },
     inRect: (x, y, r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1,
+    // bytes <-> base64 text (the headless test context has no btoa/atob) and a small string hash; used by saves
+    bytesToB64: (u8) => {
+      const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; let o = '';
+      for (let i = 0; i < u8.length; i += 3) {
+        const a = u8[i], b = i + 1 < u8.length ? u8[i + 1] : 0, c = i + 2 < u8.length ? u8[i + 2] : 0, n = (a << 16) | (b << 8) | c;
+        o += A[(n >> 18) & 63] + A[(n >> 12) & 63] + (i + 1 < u8.length ? A[(n >> 6) & 63] : '=') + (i + 2 < u8.length ? A[n & 63] : '=');
+      }
+      return o;
+    },
+    b64ToBytes: (str) => {
+      const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; str = String(str || '').replace(/[^A-Za-z0-9+/]/g, '');
+      const out = new Uint8Array(Math.floor(str.length * 3 / 4)); let k = 0;
+      for (let i = 0; i < str.length; i += 4) {
+        const a = A.indexOf(str[i]), b = A.indexOf(str[i + 1]), c = i + 2 < str.length ? A.indexOf(str[i + 2]) : -1, d = i + 3 < str.length ? A.indexOf(str[i + 3]) : -1;
+        out[k++] = (a << 2) | (b >> 4); if (c >= 0) out[k++] = ((b & 15) << 4) | (c >> 2); if (d >= 0) out[k++] = ((c & 3) << 6) | d;
+      }
+      return out.subarray(0, k);
+    },
+    hash32: (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, '0'); },
   };
 
   // --------------------------------------------------------------- event bus
@@ -197,8 +225,10 @@
     danger: 0,        // 0..1 nearest-predator threat; written by creatures, read by audio/ui
     stats: {},        // free-form counters (eaten, webs, moltCount, daysSurvived...) written by anyone via Game.stat()
     victory: false,
-    mode: 'brood',    // brood|survival: set by Game.newGame(mode)
+    mode: 'brood',    // brood|survival|territory: set by Game.newGame(mode)
     species: 'garden', // which spider you are (a Game.C.SPECIES id): set by Game.newGame(mode, species)
+    slot: null,       // Territory: the save slot (1..3) this run writes to; null in the other modes
+    lineageName: '',  // Territory: the name given to a new lineage
   };
   Game.stat = (k, add) => { const s = Game.state.stats; s[k] = (s[k] || 0) + (add === undefined ? 1 : add); return s[k]; };
 
@@ -231,7 +261,7 @@
   Game.addScreenDrawer = (layer, fn) => Game.addDrawer(layer, fn, 'screen');
 
   // ------------------------------------------------------------------- input
-  const keysDown = {}, keysPressed = {}, keysReleased = {};
+  const keysDown = {}, keysPressed = {}, keysReleased = {}, textBuf = [];   // textBuf: characters typed this frame ('\b' = backspace), for text fields
   const mouse = { x: 640, y: 360, wx: 0, wy: 0, down: false, pressed: false, released: false, right: false, rightPressed: false, wheel: 0, moved: false };
   const codeToActions = {};
   Object.keys(C.KEYMAP).forEach(a => C.KEYMAP[a].forEach(k => (codeToActions[k] || (codeToActions[k] = [])).push(a)));
@@ -252,12 +282,15 @@
       return { x, y };
     },
     anyPressed: () => { for (const k in keysPressed) return true; return mouse.pressed; },
+    // characters typed since the last frame (printable keys, ' ' and '\b' for backspace); cleared at the end of every frame
+    takeText: () => { const s = textBuf.join(''); textBuf.length = 0; return s; },
     // Tests may inject input:  Game.input.inject.keyDown('KeyW') / keyUp / click(x,y)
     inject: {
       keyDown: (code) => { if (!keysDown[code]) keysPressed[code] = true; keysDown[code] = true; Game.audioUnlock(); },
       keyUp: (code) => { keysDown[code] = false; keysReleased[code] = true; },
       click: (x, y) => { mouse.x = x; mouse.y = y; mouse.pressed = true; mouse.down = true; mouse.released = true; mouse.moved = true; Game.audioUnlock(); },
       clear: () => { for (const k in keysDown) keysDown[k] = false; },
+      type: (str) => { for (const ch of String(str)) textBuf.push(ch); },
     },
   };
   Game.audioUnlock = () => { if (Game.audio && Game.audio.unlock) { try { Game.audio.unlock(); } catch (e) { Game.reportError('audio.unlock', e); } } };
@@ -296,24 +329,59 @@
   // ------------------------------------------------------------- game control
   // mode: a Game.C.MODES id; omitted = the one last chosen (Game.settings.mode, saved by the title screen)
   // species: a Game.C.SPECIES id that is unlocked; omitted, unknown or still locked = the one last chosen (Game.settings.species), else the starter
-  Game.newGame = (mode, species) => {
+  // opts (Territory): { slot: 1..3 (the save slot this run writes to; default 1), name: the lineage name }
+  function resetModules() {
+    modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });
+  }
+  function beginRun(mode, species, opts) {
+    opts = opts || {};
     Game.state.mode = Game.modeInfo(mode || Game.settings.mode).id;
     Game.state.species = Game.pickSpecies(species);
+    Game.state.slot = Game.state.mode === 'territory' ? (opts.slot >= 1 && opts.slot <= 3 ? opts.slot | 0 : 1) : null;
+    Game.state.lineageName = Game.state.mode === 'territory' ? String(opts.name || '').slice(0, 40) : '';
     Game.state.victory = false; Game.state.danger = 0; Game.state.stats = {};
     Game.time.t = 0;
-    modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });
+    resetModules();
+  }
+  Game.newGame = (mode, species, opts) => {
+    beginRun(mode, species, opts);
     cam.target = Game.player || null; cam.targetZoom = C.STAGES[0].zoom; cam.snap();
     Game.setScene('playing');
-    Game.emit('game:new');
+    Game.emit('game:new', { mode: Game.state.mode, slot: Game.state.slot });
+  };
+  // Territory: continue a saved lineage. Reads and validates the slot (Game.save), runs the same reset path as newGame, then lets every module
+  // restore its slice of the save (deserialize, ascending priority). Returns true on success; Game.save.lastError says why not.
+  Game.loadGame = (slot, kind) => {
+    const S = Game.save, info = S && S.beginLoad ? S.beginLoad(slot, kind) : null;
+    if (!info) return false;
+    const doc = info.doc, meta = doc.meta || {};
+    try {
+      beginRun('territory', meta.species, { slot, name: meta.lineage });
+      Game.time.t = +(doc.time && doc.time.t) || 0;   // timestamps inside the save (web birth, stage timers) stay valid
+      Game.state.stats = Object.assign({}, doc.stats || {});
+      Game.setScene('playing');                       // modules that start a molt or a scene while restoring need the right scene
+      S.apply(doc);
+      cam.target = Game.player || null; cam.snap();
+      Game.emit('game:new', { mode: 'territory', slot, loaded: true });
+      const rs = Game.territory && Game.territory.resumeScene ? Game.territory.resumeScene() : 'playing';
+      if (rs && rs !== 'playing') Game.setScene(rs);
+      S.finishLoad(info);
+      return true;
+    } catch (e) {
+      Game.reportError('loadGame', e);
+      if (S.failLoad) S.failLoad(info, e);
+      Game.toTitle();
+      return false;
+    }
   };
   // Show the title screen with a fresh world behind it (does not start the sim).
   Game.toTitle = () => {
     Game.state.danger = 0; Game.state.stats = {}; Game.time.t = 0;
-    modList.forEach(m => { if (m.reset) { try { m.reset(); } catch (e) { Game.reportError(m.name + '.reset', e); } } });
+    resetModules();
     cam.target = Game.player || null; cam.targetZoom = 1.4; cam.snap(); Game.setScene('title');
   };
   Game.pause = () => { if (Game.state.scene === 'playing') Game.setScene('paused'); };
-  Game.resume = () => { if (Game.state.scene === 'paused' || Game.state.scene === 'codex' || Game.state.scene === 'molting') Game.setScene('playing'); };
+  Game.resume = () => { const sc = Game.state.scene; if (sc === 'paused' || sc === 'codex' || sc === 'molting' || sc === 'territory') Game.setScene('playing'); };
 
   // -------------------------------------------------------------- main loop
   let canvas = null, ctx = null, dpr = 1, running = false, lastTs = 0;
@@ -338,6 +406,7 @@
     for (const k in keysPressed) delete keysPressed[k];
     for (const k in keysReleased) delete keysReleased[k];
     mouse.pressed = false; mouse.released = false; mouse.rightPressed = false; mouse.wheel = 0; mouse.moved = false;
+    textBuf.length = 0;
   };
 
   Game.render = function () {
@@ -373,9 +442,12 @@
   function bindInput() {
     const d = root.document; if (!d || !d.addEventListener) return;
     const stopKeys = { Space: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Tab: 1 };
-    root.addEventListener('keydown', (e) => { if (stopKeys[e.code]) e.preventDefault(); if (!keysDown[e.code]) keysPressed[e.code] = true; keysDown[e.code] = true; Game.audioUnlock(); });
+    root.addEventListener('keydown', (e) => {
+      if (stopKeys[e.code]) e.preventDefault(); if (!keysDown[e.code]) keysPressed[e.code] = true; keysDown[e.code] = true; Game.audioUnlock();
+      if (e.key && !e.ctrlKey && !e.metaKey && !e.altKey && textBuf.length < 32) { if (e.key.length === 1) textBuf.push(e.key); else if (e.key === 'Backspace') textBuf.push('\b'); }
+    });
     root.addEventListener('keyup', (e) => { keysDown[e.code] = false; keysReleased[e.code] = true; });
-    root.addEventListener('blur', () => { for (const k in keysDown) keysDown[k] = false; mouse.down = false; if (Game.state.scene === 'playing') Game.pause(); });
+    root.addEventListener('blur', () => { for (const k in keysDown) keysDown[k] = false; mouse.down = false; if (Game.state.scene === 'playing') { Game.emit('window:blur'); Game.pause(); } });
     const pos = (e) => { const r = canvas.getBoundingClientRect(); mouse.x = (e.clientX - r.left) * C.VIEW_W / r.width; mouse.y = (e.clientY - r.top) * C.VIEW_H / r.height; mouse.moved = true; };
     canvas.addEventListener('mousemove', pos);
     canvas.addEventListener('mousedown', (e) => { pos(e); if (e.button === 0) { mouse.down = true; mouse.pressed = true; } else if (e.button === 2) { mouse.right = true; mouse.rightPressed = true; } Game.audioUnlock(); });

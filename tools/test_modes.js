@@ -1,5 +1,5 @@
 // Test script for the game modes. Run: node tools/test_modes.js
-//   - New Game on the title opens a "Choose your journey" picker: Brood (default, siblings revive you) or Survival (one life)
+//   - New Game on the title opens a "Choose your journey" picker: Brood (default, siblings revive you), Survival (one life) or Territory (saved campaign, see test_territory_ui.js)
 //   - the choice is remembered (settings), kept by Try Again, and highlighted next time
 //   - Survival: a fatal blow is final even with siblings around, and the HUD has no Siblings row
 const H = require('./harness.js');
@@ -14,12 +14,12 @@ ctx.fillText = function (s) { drawn.push(String(s)); return fillText.apply(null,
 const frame = () => { drawn = []; G.render(); return drawn; };
 const has = (re) => frame().some(s => re.test(s));
 
-const NEW_GAME = [640, 336], CARD = [[436, 340], [844, 340]];   // title button / the two mode cards
+const NEW_GAME = [640, 336], CARD = [[300, 340], [640, 340], [980, 340]];   // title button / the three mode cards (Brood, Survival, Territory)
 const ev = {}; ['player:downed', 'player:revived', 'player:died'].forEach(n => G.on(n, d => { (ev[n] = ev[n] || []).push(d); }));
 const n = (name) => (ev[name] || []).length;
 const lethal = () => { H.run(4.5); G.creatures.list.slice().forEach(c => { if (c.kind !== 'kin' && !c.dead) G.creatures.kill(c, 'other'); }); G.player.damage(9999, 'wasp'); };
 
-ok(G.C.MODES.map(m => m.id).join() === 'brood,survival', 'two modes, Brood first (the default)');
+ok(G.C.MODES.map(m => m.id).join() === 'brood,survival,territory', 'three modes, Brood first (the default)');
 ok(G.settings.mode === 'brood' && G.state.mode === 'brood', 'Brood is the default mode');
 ok(scene() === 'title', 'boots to the title screen');
 
@@ -28,11 +28,11 @@ H.run(0.5);
 H.click(...NEW_GAME);
 ok(scene() === 'title' && G.ui.sub === 'mode', 'New Game opens the mode picker instead of starting at once');
 ok(G.ui.idx.mode === 0, 'Brood is highlighted by default');
-H.run(1); ok(has(/^Choose your journey$/i) && has(/^Brood$/) && has(/^Survival$/), 'the picker shows both modes');
+H.run(1); ok(has(/^Choose your journey$/i) && has(/^Brood$/) && has(/^Survival$/) && has(/^Territory$/), 'the picker shows all three modes');
 H.shot('modes_picker');
 H.press('ArrowRight'); ok(G.ui.idx.mode === 1, 'Right arrow moves to Survival'); H.shot('modes_picker_survival');
 H.press('Escape'); ok(G.ui.sub === null && scene() === 'title', 'Esc goes back to the title');
-H.click(...NEW_GAME); H.press('ArrowRight'); H.press('ArrowRight'); ok(G.ui.idx.mode === 0, 'selection wraps around');
+H.click(...NEW_GAME); H.press('ArrowRight'); H.press('ArrowRight'); ok(G.ui.idx.mode === 2, 'Right twice reaches Territory'); H.press('ArrowRight'); ok(G.ui.idx.mode === 0, 'selection wraps around');
 
 // ---------------------------------------------------------------- Survival: one life
 H.press('ArrowRight'); H.press('Enter');

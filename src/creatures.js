@@ -1387,6 +1387,9 @@
   let lastBiteSfx = -9;
   function playerAlive() { const P = S.P; return P && !P.dead; }
   function pRad() { return S.P ? (S.P.radius || 5) : 5; }
+  // where a hatchling starts: the fixed hatch point, or in Territory the Home Site. The hatchling-safe rules below are measured from it.
+  function hatchPt() { const T = Game.territory; if (T && T.active && T.spawnPoint) { const p = T.spawnPoint(); if (p) return p; } return C.SPAWN; }
+  const territoryOn = () => { const T = Game.territory; return !!(T && T.active); };
 
   // ----------------------------------------------------------------- spatial hash
   const CELL = 96, GW = Math.ceil(C.WORLD_W / CELL), GH = Math.ceil(C.WORLD_H / CELL), NC = GW * GH;
@@ -1443,7 +1446,7 @@
       ax: 0, ay: 0, bx: 0, by: 0, trailDir: 1, trailWait: 0, avx: 0, avy: 0, avT: 0, grp: 0, noSci: false, awareT: 0, voiceT: 0, struggleSfx: 0,
       lockX: 0, lockY: 0, lockT: 0, strikeR: 0, shadowA: 0, shadowS: 1, skyA: 0, skyS: 1, phaseT: 0, hitRes: 0, dist: 0, ang2: 0, gatherT: 0, gx: 0, gy: 0,
       disperse: false, found: false, courted: false, spawnStage: 0, eatT: 0, rainWait: 0, flapT: 0, dx: 0, dy: 0, sac: 0, sacT: 0,
-      venomT: 0, venomDps: 0, noTurn: false,
+      venomT: 0, venomDps: 0, noTurn: false, rival: 0,
     };
   }
   function create(k, x, y, o) {
@@ -1465,7 +1468,7 @@
     c.trailDir = 1; c.trailWait = 0; c.avx = 0; c.avy = 0; c.avT = 0; c.grp = 0; c.noSci = false; c.awareT = 0; c.voiceT = rnd() * 2; c.struggleSfx = 0;
     c.lockT = 0; c.shadowA = 0; c.shadowS = 1; c.skyA = 0; c.skyS = 1; c.phaseT = 0; c.gatherT = 0; c.disperse = false; c.found = false; c.courted = false; c.sac = 0; c.sacT = 0;
     c.spawnStage = S.stage; c.eatT = 0; c.rainWait = 0; c.flapT = 0; c.dx = 0; c.dy = 0; c.ax = x; c.ay = y; c.bx = x; c.by = y;
-    c.venomT = 0; c.venomDps = 0; c.noTurn = false;
+    c.venomT = 0; c.venomDps = 0; c.noTurn = false; c.rival = 0;
     if (o) {
       if (o.state) c.state = o.state;
       if (o.hx != null) { c.hx = o.hx; c.hy = o.hy; }
@@ -1786,7 +1789,7 @@
   function senseHunter(c) {
     const k = c.k, P = S.P, st = c.state;
     c.zone = ZONE_IDS[zoneIdx(c.x)];
-    const act = activeNow(k);
+    const act = activeNow(k) || c.rival === 1;   // a Territory rival is on a mission: it does not sleep the day away
     if (st === 'stuck' || st === 'flee') return;
     // idle: sleeping / sheltering
     if (st === 'idle') {
@@ -1799,7 +1802,7 @@
       if (c.state === 'idle') return;
     }
     if (st === 'patrol' || st === 'ambush') {
-      if (k.rainShelter && S.rain > 0.45 && expo(c.x, c.y) > 0.5) { c.state = 'idle'; c.idleWhy = 'rain'; return; }
+      if (k.rainShelter && c.rival !== 1 && S.rain > 0.45 && expo(c.x, c.y) > 0.5) { c.state = 'idle'; c.idleWhy = 'rain'; return; }
       if (!act && rnd() < 0.3 && !(P && !P.dead && hostileToPlayer(c, P) && hypot(P.x - c.x, P.y - c.y) < k.detection * 0.5)) { c.state = 'idle'; c.idleWhy = 'phase'; return; }
     }
     // hurt: break off
@@ -1862,6 +1865,22 @@
       else if (tgt.state !== 'stuck') { tgt.state = 'flee'; tgt.t = 1.5; tgt.tx = c.x; tgt.ty = c.y; tgt.dashT = 0; }
     }
   }
+  // Territory rival (summer invasion): a hunting spider that has moved into the Claim goes for the heirloom webs. territory.js decides which web
+  // (rivalTarget) and what a raid does (rivalRaid); once the rival has been driven off (c.rival = 2) it walks away from the Home Site.
+  function rivalPatrol(c, dt) {
+    const T = Game.territory, k = c.k;
+    if (!T || !T.active) { wander(c, dt, k.speed * 0.6, 4); return; }
+    if (c.rival === 2) { const h = T.home, a = h ? atan2(c.y - h.y, c.x - h.x) : c.wa; steer(c, a + sin(S.T * 2 + c.seed * 9) * 0.25, k.chase * 0.8, dt, 5); return; }
+    const w = T.rivalTarget ? T.rivalTarget(c) : null;
+    if (w) {
+      const tx = w.x != null ? w.x : (w.x1 + w.x2) / 2, ty = w.y != null ? w.y : (w.y1 + w.y2) / 2;
+      const d = goToward(c, tx, ty, k.speed * 1.15, dt, 4, false);
+      if (d < (w.r || 30) * 1.2 + c.radius + 8) { brake(c, dt, 5); if (T.rivalRaid) T.rivalRaid(c, w, dt); }   // at the web's edge it tears silk
+    } else {
+      wander(c, dt, k.speed * 0.6, 4);
+      if (hypot(c.x - c.hx, c.y - c.hy) > 240) c.wa = atan2(c.hy - c.y, c.hx - c.x);
+    }
+  }
   function thinkHunter(c, dt) {
     const k = c.k, a = k.attack, P = S.P;
     c.senseT -= dt; c.cool -= dt; c.cool2 -= dt; c.awareT -= dt; c.fedT -= dt;
@@ -1880,6 +1899,7 @@
         }
         break;
       case 'patrol': {
+        if (c.rival) { rivalPatrol(c, dt); break; }
         if (k.ambusher) {
           c.t -= dt; const d = goToward(c, c.tx, c.ty, k.speed, dt, 3, true);
           if (d < 14 || c.t <= 0) { c.state = 'ambush'; c.t = 25 + rnd() * 30; c.hx = c.x; c.hy = c.y; }
@@ -2315,11 +2335,12 @@
     // hatchling zone is nearly safe: no birds before the first molt. Litter only from stage 2.
     let ok = stage >= 1 && S.rain < 0.45 && S.phase !== 'night' && S.T > 90;
     if (zi === 0 && stage < 2) ok = false;
-    if (zi === 0 && hypot(P.x - C.SPAWN.x, P.y - C.SPAWN.y) < 900) ok = false;
+    { const hp = hatchPt(); if (zi === 0 && hypot(P.x - hp.x, P.y - hp.y) < 900) ok = false; }
     if (!ok) { S.birdT = 6 + rnd() * 6; return; }
     const base = zi === 2 ? 26 : (zi === 1 ? 48 : 75);
     const mul = S.phase === 'dusk' ? 1.5 : (S.phase === 'dawn' ? 1.1 : 1) * (stage >= 3 ? 0.85 : 1);
-    if (spawnBird()) S.birdT = (base + rnd() * base * 0.8) * mul; else S.birdT = 8 + rnd() * 6;
+    const sm = territoryOn() && Game.territory.popMul ? (Game.territory.popMul('bird') || 1) : 1;   // Territory: more birds in autumn
+    if (spawnBird()) S.birdT = (base + rnd() * base * 0.8) * mul / sm; else S.birdT = 8 + rnd() * 6;
   }
 
   // ================================================================= population management
@@ -2351,9 +2372,9 @@
       if (pop.d[zoneIdx(x)] <= 0) continue;
       if (Game.boss && Game.boss.inArena && Game.boss.inArena(x, y, 140)) continue;   // nothing wanders into the Matriarch's arena
       if (mode !== 1 && Game.camera.inView(x, y, 70)) continue;
-      if (k.role === 'predator' && S.stage === 0 && hypot(x - C.SPAWN.x, y - C.SPAWN.y) < 1100) continue;
+      if (k.role === 'predator' && S.stage === 0) { const hp = hatchPt(); if (hypot(x - hp.x, y - hp.y) < 1100) continue; }
       if (S.P && mode !== 1 && hypot(x - S.P.x, y - S.P.y) < rin * 0.9) continue;
-      if (mode === 1 && hypot(x - C.SPAWN.x, y - C.SPAWN.y) < 50) continue;
+      if (mode === 1) { const hp = hatchPt(); if (hypot(x - hp.x, y - hp.y) < 50) continue; }
       if (!k.isFlyer && S.w && S.w.resolve) { const p = S.w.resolve(x, y, min(k.radius, 8)); if (p) { if (hypot(p.x - x, p.y - y) > 26) continue; x = p.x; y = p.y; } }
       SPOS.x = x; SPOS.y = y; return true;
     }
@@ -2421,6 +2442,7 @@
   function computeTargets() {
     const stage = S.stage, ph = S.phase, sh = S.share;
     const early = S.T < 300 ? 1.25 : 1;
+    const T = Game.territory, seasonal = (T && T.active && T.popMul) ? (k) => T.popMul(k) : null;
     for (let i = 0; i < POP_KINDS.length; i++) {
       const k = POP_KINDS[i], p = k.pop;
       let n = (p.d[0] * sh[0] + p.d[1] * sh[1] + p.d[2] * sh[2]) * p.s[stage];
@@ -2431,6 +2453,7 @@
       }
       if (k.pop.s[0] > 0 && k.role === 'prey' && k.tier === 0) n *= early;
       if (S.rain > 0.5 && k.id === 'wasp') n *= 0.4;
+      if (seasonal) n *= seasonal(k) || 0;   // Territory: prey follows the seasons (winter: little, and no flyers)
       S.target[k.idx] = min(p.cap, n);
     }
   }
@@ -2469,7 +2492,7 @@
     const nCheck = min(list.length, 22);
     for (let q = 0; q < nCheck; q++) {
       S.cursor = (S.cursor + 1) % max(1, list.length);
-      const c = list[S.cursor]; if (!c || c.dead || c.k.noRespawn || c.k.unique || c.k.id === 'bird' || c.state === 'stuck') continue;
+      const c = list[S.cursor]; if (!c || c.dead || c.k.noRespawn || c.k.unique || c.k.id === 'bird' || c.state === 'stuck' || c.rival) continue;
       const dx = c.x - S.cx, dy = c.y - S.cy, d2 = dx * dx + dy * dy;
       if (d2 > R2s && !Game.camera.inView(c.x, c.y, 160)) { removeQuiet(c); continue; }
       const tg = S.target[c.ki];
@@ -2479,17 +2502,26 @@
   function ceil(v) { return Math.ceil(v); }
 
   const KIN_START = 5;
-  function spawnKin(n) {
+  // how many siblings should be around: they drift away as a Brood spider grows; in Territory the lineage's heirs stay (up to KIN_START are shown)
+  function kinWanted() {
+    if (territoryOn() && Game.territory.lineage) return min(KIN_START, max(0, Game.territory.lineage.heirs | 0));
+    return [5, 4, 3, 1, 0][min(4, S.stage)];
+  }
+  function spawnKin(n, cx, cy) {
+    const hp = hatchPt(); cx = cx == null ? hp.x : cx; cy = cy == null ? hp.y : cy;
     for (let i = 0; i < n; i++) {
       const a = rnd() * TAU, r = 22 + rnd() * 50;
-      let x = C.SPAWN.x + cos(a) * r, y = C.SPAWN.y + sin(a) * r;
+      let x = cx + cos(a) * r, y = cy + sin(a) * r;
       if (S.w && S.w.resolve) { const p = S.w.resolve(x, y, 3); if (p) { x = p.x; y = p.y; } }
       const c = spawn('kin', x, y, { instant: true }); if (c) { c.radius = 3.6; c.hx = x; c.hy = y; }
     }
   }
-  function populateInitial() {
-    const sp = C.SPAWN;
-    S.cx = sp.x; S.cy = sp.y; S.stage = 0; S.px = sp.x; S.py = sp.y; S.R = STAGE_R[0]; S.rin = 300;
+  // fill the world around (cx, cy). A new game starts at the hatch point with plenty of easy prey; o.stage / o.fresh=false rebuild a mid-game population
+  // around a restored player (Territory load): no free springtails for a grown spider
+  function populateInitial(cx, cy, o) {
+    o = o || {};
+    const sp = (cx == null) ? hatchPt() : { x: cx, y: cy }, stage = o.stage | 0, fresh = o.fresh !== false;
+    S.cx = sp.x; S.cy = sp.y; S.stage = stage; S.px = sp.x; S.py = sp.y; S.R = STAGE_R[clamp(stage, 0, 4)]; S.rin = 300;
     S.share[0] = S.share[1] = S.share[2] = 0; updateShares(); computeTargets(); S.shareT = 0.5;
     S.count.fill(0);
     for (let pass = 0; pass < 3; pass++) {
@@ -2512,8 +2544,8 @@
         const c = spawn(id, x, y, { instant: true }); if (c) { c.hx = x; c.hy = y; have++; }
       }
     };
-    ensure('springtail', 16, 7); ensure('mite', 10, 4); ensure('midge', 8, 3);
-    spawnKin(KIN_START);
+    if (fresh) { ensure('springtail', 16, 7); ensure('mite', 10, 4); ensure('midge', 8, 3); }
+    if (o.kin !== false) spawnKin(kinWanted(), sp.x, sp.y);
   }
 
   // ================================================================= player-facing API
@@ -2602,8 +2634,11 @@
     }
     if (!best) best = { x: min(C.WORLD_W - 300, px + 1400), y: clamp(py, 400, C.WORLD_H - 400) };
     if (S.w && S.w.resolve) { const p = S.w.resolve(best.x, best.y, 14); if (p) { best.x = p.x; best.y = p.y; } }
-    const c = spawn('mate', best.x, best.y, { instant: true });
-    if (c) { c.hx = best.x; c.hy = best.y; c.radius = 17; c.found = false; c.courted = false; c.hp = c.maxHp = 9999; }
+    return placeMate(best.x, best.y, false, false);
+  }
+  function placeMate(x, y, found, courted) {
+    const c = spawn('mate', x, y, { instant: true });
+    if (c) { c.hx = x; c.hy = y; c.radius = 17; c.found = !!found; c.courted = !!courted; c.hp = c.maxHp = 9999; }
     creatures.mate = c || null;
     return c;
   }
@@ -2684,11 +2719,12 @@
     }
     if (c.vx !== c.vx || c.x !== c.x || c.y !== c.y) { c.x = c.hx || C.SPAWN.x; c.y = c.hy || C.SPAWN.y; c.vx = c.vy = 0; if (Game.reportError) Game.reportError('creatures.nan', new Error('NaN in ' + c.kind)); }
   }
-  function updateKinCount() {
-    const wanted = [5, 4, 3, 1, 0][min(4, S.stage)];
+  function updateKinCount(instant) {
+    const wanted = kinWanted();
     let n = 0, far = null, fd = -1;
     for (let i = 0; i < list.length; i++) { const c = list[i]; if (c.dead || c.kind !== 'kin' || c.disperse || c.sac) continue; n++; const d = hypot(c.x - S.px, c.y - S.py) + rnd() * 30; if (d > fd) { fd = d; far = c; } }
     if (n > wanted && far) { far.disperse = true; far.wa = rnd() * TAU; }
+    else if (n < wanted && territoryOn() && S.P && !S.P.dead) spawnKin(instant ? wanted - n : 1, S.P.x, S.P.y);   // Territory: an heir who is still alive is never far away
   }
 
   // ================================================================= module
@@ -2717,6 +2753,42 @@
       return { hip: pts(SLH), knee: pts(SLK), foot: pts(SLF), bone: Array.from(SLB) };
     },
 
+    // ---- Territory: saving. Only what has to survive is saved: the mate, active rivals (the boss is boss.js's). Everything else is respawned from the
+    // seed and the season on load, so the world keeps living while you are away and the save stays small.
+    serialize() {
+      const per = [], rd = (v) => Math.round(v * 10) / 10;
+      const m = creatures.mate;
+      if (m && !m.dead) per.push({ kind: 'mate', x: rd(m.x), y: rd(m.y), found: !!m.found, courted: !!m.courted });
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (c.dead || !c.rival) continue;
+        per.push({ kind: 'rival', k: c.kind, x: rd(c.x), y: rd(c.y), hp: rd(c.hp), mode: c.rival, hx: rd(c.hx), hy: rd(c.hy) });
+      }
+      return { persistent: per, kin: kinWanted() };
+    },
+    // rebuild the population around the restored player, then put the persistent creatures back
+    deserialize(d) {
+      const P = Game.player;
+      clearAll(); creatures.mate = null; S.alarms.length = 0; S.huddle = 0;
+      for (const k in spCache) delete spCache[k];
+      S.P = P || null; refreshEnv();
+      if (P) populateInitial(P.x, P.y, { stage: P.stage | 0, fresh: false, kin: false });
+      else populateInitial();
+      const per = d && Array.isArray(d.persistent) ? d.persistent : [];
+      for (let i = 0; i < per.length; i++) {
+        const e = per[i]; if (!e || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+        if (e.kind === 'mate') placeMate(e.x, e.y, e.found, e.courted);
+        else if (e.kind === 'rival' && KINDS[e.k]) {
+          const c = spawn(e.k, e.x, e.y, { instant: true, state: 'patrol' });
+          if (c) { c.rival = e.mode === 2 ? 2 : 1; c.hx = typeof e.hx === 'number' ? e.hx : e.x; c.hy = typeof e.hy === 'number' ? e.hy : e.y; if (typeof e.hp === 'number') c.hp = clamp(e.hp, 1, c.maxHp); }
+        }
+      }
+      updateKinCount(true);
+      buildHash();
+    },
+    syncKin(instant) { updateKinCount(!!instant); },       // Territory: make the visible siblings match the lineage's heirs (an heir was spent or hatched)
+    // quietly remove a creature (a rival that has been driven out of the Claim): no corpse, no kill credit
+    remove(c) { if (c && !c.dead) removeQuiet(c); },
     init() {
       try { const seen = Game.store.get('seenKinds', []); if (Array.isArray(seen)) seen.forEach(s => { if (KINDS[s]) visibleKinds.add(s); }); } catch (e) { /* ignore */ }
       Game.addDrawer(Game.LAYER.CREATURES_LOW, ctx => drawLow(ctx));
