@@ -45,7 +45,7 @@
 
   // view/frame state shared by draw helpers
   const V = { z: 1.5, px: 1 / 1.5, x0: 0, y0: 0, x1: 0, y1: 0, lod: 2 };
-  const env = { frame: -1, rain: 0, wind: 0, wdx: 0.97, wdy: 0.24, wet: 0, dew: 0.1 };
+  const env = { frame: -1, rain: 0, wind: 0, frost: 0, wdx: 0.97, wdy: 0.24, wet: 0, dew: 0.1 };
 
   // ------------------------------------------------------------------ helpers
   const clamp = U.clamp;
@@ -80,6 +80,7 @@
       if (wm > 1e-3) { wdx = (wt.windX || 0) / wm; wdy = (wt.windY || 0) / wm; }
     }
     env.rain = rain; env.wind = wi; env.wdx = wdx; env.wdy = wdy;
+    env.frost = (wt && wt.type === 'frost') ? (wt.intensity == null ? 0.6 : wt.intensity) : 0;   // a cold snap (Territory winter) cracks exposed silk
     const dt = Math.min(0.1, Game.time.dt || 0.016);
     env.wet += (Math.min(1, rain * 1.4) - env.wet) * Math.min(1, dt * (rain > env.wet ? 0.8 : 0.08));
     let dew = 0.12;
@@ -247,6 +248,38 @@
 
     vibration(web) { return web ? web.vib : 0; },
 
+    // ---- Territory: heirloom webs. territory.js owns the rules (claim, slots, silk cost); this is the mechanics.
+    setHeirloom(web, on) {
+      if (!web || web.dying) return false;
+      web.heirloom = !!on; web.pulse = Math.max(web.pulse, 0.8); web.pulseX = web.x != null ? web.x : (web.x1 + web.x2) / 2; web.pulseY = web.y != null ? web.y : (web.y1 + web.y2) / 2;
+      return true;
+    },
+    heirlooms() { const o = []; for (let i = 0; i < webs.list.length; i++) { const w = webs.list[i]; if (w.heirloom && !w.dying) o.push(w); } return o; },
+    // add integrity (0..1 scale); returns how much was actually restored
+    repair(web, amount) {
+      if (!web || web.dying || !(amount > 0)) return 0;
+      const before = web.integrity; web.integrity = Math.min(1, web.integrity + amount);
+      web.dmgCause = ''; web.pulse = Math.max(web.pulse, 0.6);
+      return web.integrity - before;
+    },
+    // wear a web down by hand (a rival raiding it, a succession setback); destroys it at 0 unless `floor` keeps it alive
+    damage(web, amount, cause, floor) {
+      if (!web || web.dying || !(amount > 0)) return 0;
+      const before = web.integrity; web.integrity = Math.max(floor == null ? -1 : floor, web.integrity - amount);
+      web.dmgCause = cause || 'torn'; web.vib = Math.min(2.4, web.vib + 0.6);
+      if (web.integrity <= 0) destroyWeb(web, web.dmgCause);
+      return before - web.integrity;
+    },
+    // silently drop every web the test does not keep (Territory: the winter turnover keeps only heirloom webs); no fade, no events
+    keepOnly(fn) { for (let i = webs.list.length - 1; i >= 0; i--) if (!fn(webs.list[i])) webs.list.splice(i, 1); },
+    // eat the old silk: the web goes (it fades like any other) and its owner gets part of the silk back. Returns the silk given back.
+    recycle(web, share) {
+      if (!web || web.dying) return 0;
+      const cost = webs.cost(web.type), give = Math.round(cost * (share == null ? 0.5 : share) * (0.4 + 0.6 * Math.min(1, web.integrity)));
+      web.heirloom = false; destroyWeb(web, 'recycled');
+      return give;
+    },
+
     // Other modules (creatures) may shake a web: amount ~0.2..1.5, optional impact point.
     shake(web, amount, x, y) {
       if (!web) return;
@@ -313,6 +346,7 @@
         // weather (exposure shields webs under cover)
         if (w.expoT <= t) { w.expoT = t + 1 + Math.random() * 0.5; w.expo = exposureAt(w.x, w.y); }
         if (rain > 0.02) { const d = rain * w.expo * 0.010 * ty.rain; rate += d; if (d > big) { big = d; cause = 'rain'; } }
+        if (env.frost > 0.02) { const d = env.frost * w.expo * 0.011 * ty.rain; rate += d; if (d > big) { big = d; cause = 'frost'; } }
         if (wi > 0.15) {
           const d = wi * w.expo * 0.012 * ty.wind; rate += d; if (d > big) { big = d; cause = 'wind'; }
           // a hard gust can snap a thin line
@@ -363,7 +397,7 @@
   function blankWeb(type) {
     return {
       id: nextId++, type: type, x1: 0, y1: 0, x2: 0, y2: 0, x: 0, y: 0, r: 0, rx: 0, ry: 0, rot: 0,
-      integrity: 1, age: 0, trapped: [], tm: [], anchorA: null, anchorB: null, owner: 'player',
+      integrity: 1, age: 0, trapped: [], tm: [], anchorA: null, anchorB: null, owner: 'player', heirloom: false,
       build: 0, buildDur: TYPE[type].build, placed: false, fade: 1, fadeT: 0, dying: false, dead: false,
       vib: 0, vx: 0, vy: 0, pulse: 0, pulseX: 0, pulseY: 0, born: 0, seed: 1, dmgCause: '', cd: null,
       expo: 1, expoT: 0, anchoredBoth: false, anchors: 0,
@@ -663,7 +697,7 @@
     while (live > MAX_WEBS) {
       let oldest = null;
       for (let i = 0; i < L.length; i++) {
-        const w = L[i]; if (w.dying || w === keepW) continue;
+        const w = L[i]; if (w.dying || w === keepW || w.heirloom) continue;   // heirloom webs are never culled to make room
         const prot = w.trapped.length > 0 || (w.type === 'retreat' && Game.player && webs.sheltered(Game.player.x, Game.player.y) === w);
         const score = w.born + (prot ? 100000 : 0);
         if (!oldest || score < oldest.s) oldest = { w: w, s: score };
@@ -767,12 +801,28 @@
           if (w.type !== ty) continue;
           if (w.bx1 < V.x0 || w.bx0 > V.x1 || w.by1 < V.y0 || w.by0 > V.y1) continue;
           drawWeb(ctx, w, 1, false);
+          if (w.heirloom && !w.dying) drawHeirloomMark(ctx, w);
         }
       }
       drawWraps(ctx);
     }
     drawFx(ctx);
     if (webs.ghostOn && webs._ghost) drawGhost(ctx);
+  }
+
+  // a warm gold thread round an heirloom web, so you can tell at a glance which webs the territory keeps
+  function drawHeirloomMark(ctx, w) {
+    const px = V.px, a = 0.34 + 0.12 * Math.sin(T * 2.2 + w.seed), I = Math.min(1, w.integrity * 1.3);
+    ctx.save(); ctx.lineWidth = 1.5 * px; ctx.strokeStyle = rgba(255, 206, 120, a * I); ctx.setLineDash([7 * px, 5 * px]); ctx.lineDashOffset = -T * 6 * px;
+    ctx.beginPath();
+    if (w.type === 'line') { ctx.moveTo(w.x1, w.y1); ctx.lineTo(w.x2, w.y2); }
+    else if (w.type === 'sheet') ctx.ellipse(w.x, w.y, w.rx * 1.04, w.ry * 1.04, w.rot, 0, TAU);
+    else ctx.arc(w.x, w.y, w.r * 1.05, 0, TAU);
+    ctx.stroke(); ctx.setLineDash([]);
+    const cx = w.x != null ? w.x : (w.x1 + w.x2) / 2, cy = w.y != null ? w.y : (w.y1 + w.y2) / 2, d = 4.5 * px;
+    ctx.fillStyle = rgba(255, 216, 140, (0.7 + 0.2 * Math.sin(T * 3 + w.seed)) * I);
+    ctx.beginPath(); ctx.moveTo(cx, cy - d); ctx.lineTo(cx + d, cy); ctx.lineTo(cx, cy + d); ctx.lineTo(cx - d, cy); ctx.closePath(); ctx.fill();
+    ctx.restore();
   }
 
   // Choose which animated (building / vibrating / pulsing) webs get the full per-vertex vector render:
@@ -1325,6 +1375,66 @@
     for (let q = 0; q < marks.length; q++) { const a = marks[q]; if (!a) continue; ctx.beginPath(); ctx.arc(a.x, a.y, (3.5 + 1.5 * Math.sin(T * 5 + q)) * px, 0, TAU); ctx.strokeStyle = 'rgba(' + col + ',0.9)'; ctx.stroke(); }
     if (g.type === 'line' && !g.anchoredBoth) { ctx.beginPath(); ctx.arc(g.x2, g.y2, 3 * px, 0, TAU); ctx.strokeStyle = 'rgba(' + col + ',0.5)'; ctx.stroke(); }
   }
+
+  // ---------------------------------------------------------------- Territory: saving
+  // A web is saved as its placement (position, size, angle, seed) plus its condition; the strand geometry is rebuilt from the seed, so a restored
+  // web looks the same as the one that was saved. Trapped prey is not saved (the population is respawned on load).
+  const rd = (v, n) => { const k = Math.pow(10, n || 0); return Math.round(v * k) / k; };
+  webs.serialize = function () {
+    const out = [];
+    for (let i = 0; i < webs.list.length; i++) {
+      const w = webs.list[i]; if (w.dying || w.dead) continue;
+      const r = { id: w.id, type: w.type, seed: w.seed, integrity: rd(w.integrity, 3), age: rd(w.age, 1), build: rd(w.build, 2), heirloom: !!w.heirloom, owner: w.owner };
+      if (w.type === 'line') { r.x1 = rd(w.x1, 1); r.y1 = rd(w.y1, 1); r.x2 = rd(w.x2, 1); r.y2 = rd(w.y2, 1); r.sag = rd(w.sag, 2); r.ab = w.anchoredBoth ? 1 : 0; }
+      else { r.x = rd(w.x, 1); r.y = rd(w.y, 1); r.r = rd(w.r, 1); r.rot = rd(w.rot || 0, 3); if (w.type === 'sheet') { r.rx = rd(w.rx, 1); r.ry = rd(w.ry, 1); } }
+      out.push(r);
+    }
+    return { list: out, selected: webs.selected };
+  };
+  function restoreWeb(r) {
+    if (!r || !TYPE[r.type]) return null;
+    const n = (v, d) => (typeof v === 'number' && isFinite(v)) ? v : d;
+    const w = blankWeb(r.type);
+    if (n(r.id, 0) > 0) w.id = r.id; else w.id = nextId++;
+    w.seed = (n(r.seed, 1) >>> 0) || 1;
+    const rng = U.mulberry32(w.seed), wd = Game.world, canA = wd && typeof wd.nearestAnchor === 'function';
+    if (r.type === 'line') {
+      w.x1 = n(r.x1, 0); w.y1 = n(r.y1, 0); w.x2 = n(r.x2, 0); w.y2 = n(r.y2, 0);
+      w.anchoredBoth = !!r.ab;
+      if (canA) { w.anchorA = wd.nearestAnchor(w.x1, w.y1, 3); w.anchorB = w.anchoredBoth ? wd.nearestAnchor(w.x2, w.y2, 3) : null; }
+      const dx = w.x2 - w.x1, dy = w.y2 - w.y1, L = Math.hypot(dx, dy) || 1;
+      let nx = -dy / L, ny = dx / L; if (ny < 0) { nx = -nx; ny = -ny; }
+      w.nx = nx; w.ny = ny; w.len = L; w.sag = n(r.sag, L * 0.04);
+      w.x = (w.x1 + w.x2) / 2; w.y = (w.y1 + w.y2) / 2; w.r = L / 2 + 12;
+      const nb = Math.max(3, Math.floor(L / 15));
+      w.bt = new Float32Array(nb); w.bs = new Float32Array(nb); w.bsp = new Float32Array(nb);
+      for (let i = 0; i < nb; i++) { w.bt[i] = (i + 0.5 + (rng() - 0.5) * 0.6) / nb; w.bs[i] = 0.7 + rng() * 0.8; w.bsp[i] = rng(); }
+      const m = w.sag + 14;
+      w.bx0 = Math.min(w.x1, w.x2) - m; w.bx1 = Math.max(w.x1, w.x2) + m; w.by0 = Math.min(w.y1, w.y2) - m; w.by1 = Math.max(w.y1, w.y2) + m;
+    } else {
+      w.x = n(r.x, 0); w.y = n(r.y, 0); w.r = Math.max(10, n(r.r, 60)); w.rot = n(r.rot, 0);
+      if (r.type === 'sheet') { w.rx = Math.max(10, n(r.rx, w.r)); w.ry = Math.max(10, n(r.ry, w.rx * 0.62)); w.r = w.rx; geomSheet(w, rng); }
+      else if (r.type === 'orb') geomOrb(w, rng, w.rot);
+      else geomRetreat(w, rng, w.rot);
+    }
+    w.integrity = Math.max(0.02, Math.min(1, n(r.integrity, 1))); w.age = Math.max(0, n(r.age, 0)); w.heirloom = !!r.heirloom;
+    w.build = Math.max(0, Math.min(1, n(r.build, 1))); w.placed = w.build >= 1; w.buildDur = TYPE[r.type].build;
+    w.born = now() - w.age; w.owner = r.owner || 'player';
+    return w;
+  }
+  webs.deserialize = function (d) {
+    if (!d || typeof d !== 'object') return;
+    webs.list.length = 0;
+    const L = Array.isArray(d.list) ? d.list : [];
+    let maxId = 0;
+    for (let i = 0; i < L.length; i++) {
+      let w = null;
+      try { w = restoreWeb(L[i]); } catch (e) { Game.reportError('webs.restore', e); }
+      if (w) { webs.list.push(w); if (w.id > maxId) maxId = w.id; }
+    }
+    nextId = Math.max(nextId, maxId + 1);
+    if (d.selected && TYPE[d.selected] && webs.unlocked(d.selected)) webs.selected = d.selected;
+  };
 
   Game.register('webs', webs);
 })();

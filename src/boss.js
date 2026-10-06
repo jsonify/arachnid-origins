@@ -177,6 +177,21 @@ const HURT_OPEN = 1.35;       // damage multiplier while she is recovering or st
     }
   };
 
+  // ---- Territory: saving. A fight in progress is not worth carrying over: she goes back to her lair and heals, exactly as when you flee her arena.
+  // If she was beaten (or gone) she stays gone, even if this browser has not recorded the unlock.
+  B.serialize = function () {
+    const st = B.state === 'defeated' ? 'gone' : (B.active() ? 'dormant' : B.state);
+    return { state: st, discovered: !!B.discovered };
+  };
+  B.deserialize = function (d) {
+    if (!d || typeof d !== 'object') return;
+    B.discovered = !!d.discovered;
+    if (d.state === 'gone' && B.state !== 'gone') {
+      if (alive(B.c) && Game.creatures && Game.creatures.remove) Game.creatures.remove(B.c);
+      B.c = null; B.state = 'gone';
+    }
+  };
+
   B.init = function () {
     Game.addDrawer(Game.LAYER.SHELTER, drawLair);
     Game.addDrawer(35, drawGround);

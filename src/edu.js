@@ -267,6 +267,38 @@
     "A spider's silk glands grow along with its body. As spiderlings mature they can make thicker, longer and more varied silk.",
     'Choose Silk Glands when molting.', { event: 'molt:choose', match: { id: 'silk' } });
 
+  // ---- Territory mode (written for the seasonal campaign; like every fact in the game they should be checked by an arachnologist before release)
+  F('t_seasons', 'lifecycle', 'Timing Is Everything',
+    'Many spiders time their lives to the seasons. In temperate places, orb-weavers such as the garden spider emerge in spring when small insects appear, grow through summer, mature in late summer, mate in autumn and lay their egg sacs before winter. Matching the calendar to the food supply is called phenology.',
+    'Play into the first summer in Territory mode.', { event: 'season:change', match: { season: 'summer' } });
+  F('t_feast_famine', 'ecosystem', 'Feast and Famine',
+    'Insect numbers swing with the seasons. Flying insects peak in warm summer weather and all but vanish in winter, so a web-builder must hunt more widely, shelter, or slow right down when the supply dries up.',
+    'Reach autumn in Territory mode.', { event: 'season:change', match: { season: 'autumn' } });
+  F('t_overwinter', 'lifecycle', 'Getting Through Winter',
+    'Spiders overwinter in different ways. Many small species, and the young of some larger ones, shelter in leaf litter, bark crevices and under stones. Some adults survive in hiding while others die with the first hard frosts, leaving egg sacs behind. Some spiders also make antifreeze-like chemicals such as glycerol that lower the temperature at which their bodies freeze.',
+    'Reach winter in Territory mode.', { event: 'season:change', match: { season: 'winter' } });
+  F('t_cold_blooded', 'adaptation', 'Cold-Blooded in a Cold Snap',
+    "Spiders are ectotherms: their body temperature follows the air around them. In a hard frost they slow down and may fall into a torpor, which is why shelter matters. A silk retreat or a bark crevice stays milder than the open and shields a small spider from frost and wind.",
+    'Be out when a frost arrives.', { event: 'weather:change', match: { weather: 'frost' } });
+  F('t_silk_recycling', 'silk', 'Eating the Old Web',
+    'Many orb-weaving spiders eat their old web and spin a new one, often within a day. Experiments with tagged silk proteins showed that much of the eaten silk is built straight into the new web, so recycling saves a spider a lot of protein and energy.',
+    'Recycle a web (hold X beside it) in Territory mode.', { event: 'web:destroyed', match: { cause: 'recycled' } });
+  F('t_web_sites', 'behavior', 'Defending a Web Site',
+    'A good web site is worth fighting for. In many web-building species a spider that already owns a site tends to win contests over it, and intruders are often chased off by vibrations, displays or short fights. Even so, poor catches, damage and bad weather push spiders to move on.',
+    'Mark an heirloom web in Territory mode.', { event: 'web:heirloom' });
+  F('t_larder', 'behavior', 'A Larder in the Web',
+    'When prey is plentiful, many spiders wrap more insects than they can eat and leave the bundles in or near the web for later. Wrapping holds the prey still and keeps it from escaping. Because a spider can wait many days between meals, a stored bundle is a useful buffer against a few lean days.',
+    'Wrap prey for the pantry in Territory mode.', { event: 'pantry:store' });
+  F('t_intruders', 'ecosystem', 'Intruders at the Door',
+    "Wolf spiders and jumping spiders hunt on foot instead of catching prey in webs. They roam widely, and to them another spider's web is just ground to cross, so they can tear silk as they go. Web owners usually retreat, repair the damage and, when cornered, bite.",
+    'Meet a rival in your Claim.', { event: 'territory:rival_started' });
+  F('t_eggs_survivors', 'lifecycle', 'Many Eggs, Few Survivors',
+    'A female spider may lay dozens to hundreds of eggs in a silk sac, and sometimes several sacs. The sac insulates and protects the eggs, and some species guard it or carry it. Most spiderlings die young, which is why large clutches pay off. In many web-building species the mother does not live long after laying.',
+    'Lay an egg sac in Territory mode.', { event: 'territory:generation_end' });
+  F('t_heredity', 'lifecycle', 'Why Siblings Differ',
+    'Offspring are not copies of their mother. Genes are shuffled each generation, a rare mutation can add something new, and the environment shapes growth too. Over many generations, traits that help spiders survive and breed become more common: that is natural selection at work.',
+    'Hatch a second generation in Territory mode.', { event: 'territory:generation_begin', match: (d) => (d.generation || 1) >= 2 });
+
   // ------------------------------------------------------------------ stage lore
   const STAGE_LORE = [
     { title: 'Hatchling', text: 'You have burst from the silk egg sac into the leaf litter, a speck smaller than a grain of rice. Find a drop of dew, nibble on tiny prey and stay out of sight.',
@@ -324,7 +356,7 @@
                   science: 'Spiders are built for short bursts of speed rather than endurance: their circulation delivers oxygen slowly, so they tire quickly and need time to recover.' },
     drowned:    { title: 'Drowned', flavor: 'The water took you. To a creature this small, a puddle is a lake.',
                   science: 'Water has surface tension strong enough to trap tiny animals. Some spiders, such as the diving bell spider, carry a bubble of air underwater, and others can skate on the surface, but most cannot.' },
-    exposure:   { title: 'Exposed to the Elements', flavor: 'Rain and wind battered you with nowhere to hide.',
+    exposure:   { title: 'Exposed to the Elements', flavor: 'Rain, wind and frost battered you with nowhere to hide.',
                   science: 'Rain, wind and cold are serious dangers for small spiders. That is why they shelter under leaves, in bark crevices, or in silk retreats when the weather turns.' },
     fell:       { title: 'Fell', flavor: 'The ground rushed up too fast.',
                   science: 'Very small animals survive falls well because air resistance slows them down, but nothing is guaranteed. Spiders dangle on a dragline to catch themselves when they slip.' },
@@ -396,6 +428,19 @@
     ],
   ];
 
+  // ---------------------------------------------------------------- Territory goals
+  // The Territory layer on top of the stage objectives: goals belong to the lineage (they survive a new generation) and pay Claim Points, not growth.
+  // `measure(d)` sets the progress from the event instead of counting events.
+  const TERRITORY_GOALS = [
+    { id: 'g_heirloom', text: 'Mark a web as an heirloom (stand in it inside your Claim, press E)', goal: 1, cp: 3, ev: 'web:heirloom' },
+    { id: 'g_pantry', text: 'Wrap 3 trapped prey for the pantry (stand beside one near a retreat, press E)', goal: 3, cp: 4, ev: 'pantry:store' },
+    { id: 'g_night', text: 'Keep 3 heirloom webs above half strength through a night', goal: 3, cp: 6, ev: 'territory:night', measure: (d) => d.kept || 0 },
+    { id: 'g_rival', text: 'Drive a rival out of your Claim', goal: 1, cp: 5, ev: 'territory:rival_repelled' },
+    { id: 'g_full', text: 'Fill the pantry', goal: 1, cp: 5, ev: 'pantry:full' },
+    { id: 'g_winter', text: 'Survive your first winter', goal: 1, cp: 10, ev: 'season:change', match: { season: 'spring', prev: 'winter' } },
+    { id: 'g_rank', text: 'Reach Domain rank (75 Claim Points)', goal: 3, cp: 8, ev: 'territory:rank', measure: (d) => d.rank || 0 },
+  ];
+
   // ------------------------------------------------------------------- match util
   function matches(m, d) {
     if (!m) return true;
@@ -412,11 +457,14 @@
   // ---------------------------------------------------------------------- module
   const WIRED = ['stage:change', 'molt:start', 'molt:choose', 'molt:end', 'player:damaged', 'player:died', 'player:ate', 'player:drank',
     'player:rest', 'creature:seen', 'creature:killed', 'creature:attack', 'web:spun', 'web:trapped', 'web:destroyed', 'zone:enter',
-    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived', 'boss:start', 'boss:defeated', 'species:unlocked'];
+    'day:phase', 'weather:change', 'mate:found', 'courtship:done', 'game:victory', 'player:revived', 'boss:start', 'boss:defeated', 'species:unlocked',
+    'season:change', 'territory:rank', 'web:heirloom', 'pantry:store', 'pantry:full', 'succession', 'territory:generation_end', 'territory:generation_begin', 'territory:night', 'territory:rival_started', 'territory:rival_repelled', 'lineage:ended'];
 
   const edu = {
     priority: 50,
-    CATEGORIES, FACTS, STAGE_LORE, ANATOMY, DEATH, OBJECTIVE_DEFS: OBJECTIVES,
+    CATEGORIES, FACTS, STAGE_LORE, ANATOMY, DEATH, OBJECTIVE_DEFS: OBJECTIVES, TERRITORY_GOALS,
+    goals: [],                    // Territory: the active lineage goals (at most 2), {id, text, goal, progress, done, reward:{cp}}
+    goalsDone: [],                // Territory: ids of the goals the lineage has finished
     unlocked: new Set(),          // persisted
     seenKinds: new Set(),         // persisted bestiary discoveries
     recent: [],                   // fact ids unlocked in this run (newest last)
@@ -444,6 +492,12 @@
     },
 
     reset() {
+      edu.goals = []; edu.goalsDone = []; edu._goalQueue = [];
+      edu.nextGeneration();
+      edu.buildGoals();
+    },
+    // everything that belongs to one spider's life; the lineage's goals are left alone (Territory starts a new generation without a full reset)
+    nextGeneration() {
       edu.recent = []; edu.objectives = []; edu.stats = { ate: 0, spun: 0, trapped: 0, molts: 0, kills: 0, drank: 0, damage: 0, objectives: 0, dist: 0 };
       edu.stageTimes = []; edu.visited = {}; edu._counts = {}; edu._factCounts = {};
       edu.flags = { moved: false, drank: false, ate: false, spun: false, sheet: false, orb: false, retreat: false, hidden: false, sprinted: false, sheltered: false, rested: false };
@@ -452,6 +506,37 @@
       edu._hungryDone = false; edu._lowSilkDone = false; edu._exploreCells = 0;
       edu.stage = safe(() => (P() && P().stage) || 0, 0);
       edu.buildStage(edu.stage);
+    },
+
+    // ---------------------------------------------------- territory goals
+    territoryOn() { return !!(Game.territory && Game.territory.active); },
+    buildGoals() {
+      edu._goalQueue = edu.territoryOn() ? TERRITORY_GOALS.filter(d => edu.goalsDone.indexOf(d.id) < 0 && !edu.goals.some(g => g.id === d.id)) : [];
+      edu.refillGoals();
+    },
+    refillGoals() {
+      while (edu.goals.length < 2 && edu._goalQueue.length) {
+        const d = edu._goalQueue.shift();
+        edu.goals.push({ id: d.id, text: d.text, progress: 0, goal: d.goal, done: false, reward: { cp: d.cp }, ev: d.ev, match: d.match, measure: d.measure, doneAt: 0 });
+      }
+    },
+    goalProgress(g, value) {
+      if (g.done) return;
+      g.progress = Math.min(g.goal, Math.max(g.progress, value));
+      if (g.progress < g.goal) return;
+      g.done = true; g.doneAt = Game.time.t; if (edu.goalsDone.indexOf(g.id) < 0) edu.goalsDone.push(g.id);
+      Game.emit('goal:complete', { id: g.id, text: g.text, cp: g.reward.cp });
+      Game.emit('sfx', { name: 'levelup', vol: 0.55 });
+      const T = Game.territory; if (T && T.addCP) { try { T.addCP(g.reward.cp, 'goal'); } catch (e) { Game.reportError('edu.goalCP', e); } }
+    },
+    // saving (Territory): which goals are done and how far the active ones are
+    serialize() { return { done: edu.goalsDone.slice(), active: edu.goals.filter(g => !g.done).map(g => ({ id: g.id, progress: g.progress })), flags: { heirloom: !!edu.flags.heirloom } }; },
+    deserialize(d) {
+      if (!d || typeof d !== 'object') return;
+      edu.goalsDone = Array.isArray(d.done) ? d.done.filter(id => TERRITORY_GOALS.some(g => g.id === id)) : [];
+      edu.goals = []; edu.buildGoals();
+      if (Array.isArray(d.active)) d.active.forEach(a => { const g = edu.goals.find(x => x.id === (a && a.id)); if (g && typeof a.progress === 'number') g.progress = Math.max(0, Math.min(a.progress, g.goal - 1)); });   // an active goal is never finished
+      if (d.flags && d.flags.heirloom) edu.flags.heirloom = true;
     },
 
     // ----------------------------------------------------------- facts API
@@ -488,6 +573,7 @@
           if (d.type === 'sheet') edu.flags.sheet = true; else if (d.type === 'orb') edu.flags.orb = true; else if (d.type === 'retreat') edu.flags.retreat = true;
           break;
         case 'web:trapped': s.trapped++; break;
+        case 'web:heirloom': edu.flags.heirloom = true; break;
         case 'creature:killed': s.kills++; break;
         case 'player:damaged': s.damage += d.amount || 0; break;
         case 'player:rest': if (d.on) edu.flags.rested = true; break;
@@ -514,6 +600,11 @@
         const o = edu.objectives[i];
         if (o.done || o.ev !== evt || !matches(o.match, d)) continue;
         edu.progress(o, (o.progress || 0) + 1);
+      }
+      for (let i = 0; i < edu.goals.length; i++) {
+        const g = edu.goals[i];
+        if (g.done || g.ev !== evt || !matches(g.match, d)) continue;
+        edu.goalProgress(g, g.measure ? g.measure(d) : g.progress + 1);
       }
     },
 
@@ -576,6 +667,8 @@
         if (o.done && t - o.doneAt > 4) edu.objectives.splice(i, 1);
       }
       edu.refill();
+      for (let i = edu.goals.length - 1; i >= 0; i--) { const g = edu.goals[i]; if (g.done && t - g.doneAt > 4) edu.goals.splice(i, 1); }
+      edu.refillGoals();
       if (p.dead) return;
       // movement
       if (edu._lastX != null) {
@@ -646,11 +739,19 @@
       if (st >= 2 && !f.sheet && p.silk >= 25) return 'Sheet webs (key 2) entangle prey walking across them. Sit beside one and wait.';
       if (st >= 2 && !f.retreat && p.silk >= 30) return 'Silk Retreat (key 4): a safe tent for resting and for the soft time after a molt.';
       if (st >= 3 && !f.orb && p.silk >= 45) return 'Orb webs (key 3) catch flying insects. Build one where the air is busy, near flowers.';
+      if (st === 4 && Game.territory && Game.territory.active && Game.territory.matingNote && Game.territory.matingNote() && !(cr && cr.mate)) return Game.territory.matingNote();
       if (st === 4 && Game.state && !(p.mate && p.mate.found)) return 'Adulthood: follow the glowing trail to find a mate. Eat first; courtship needs strength.';
       if (st === 4 && p.mate && p.mate.found && !p.mate.courted) return 'Press E next to the mate to court. You need hunger above 35%.';
       if (st === 4 && p.mate && p.mate.courted && !p.mate.laid) return 'Find a hidden egg site (a hollow or shelter) and press E to lay your egg sac.';
       if (Game.world && Game.world.isNight && Game.world.isNight() && t > 20) { return 'Night: darker, and some predators are more active. Vibration Sense shows nearby creatures.'; }
-      if (t < 120 && cr && cr.siblings > 0 && Game.state.mode !== 'survival') return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
+      const ter = Game.territory;
+      if (ter && ter.active) {   // Territory tips: seasons, the Claim, heirs
+        if (t < 120) return 'Territory: this home site is yours. If you fall, an heir takes your place; your webs and pantry stay. Press T for your Territory, Esc to save.';
+        if (st >= 4 && ter.matingNote && ter.matingNote()) return ter.matingNote();
+        if (st >= 2 && !f.heirloom && p.silk >= 5 && ter.inClaim && ter.inClaim(p.x, p.y)) return 'Stand in one of your webs inside the Claim and press E to make it an heirloom web: it is kept through winter and passed to the next generation.';
+        const cal = ter.calendar && ter.calendar();
+        if (cal && cal.season === 'autumn' && cal.dayInSeason >= 5 && ter.pantry && ter.pantry.length < 3) return 'Winter is coming and prey will vanish. Wrap trapped prey for the pantry (press E beside it near a retreat) and keep your webs repaired.';
+      } else if (t < 120 && cr && cr.siblings > 0 && Game.state.mode !== 'survival') return 'Your siblings will give their lives to bring you back if you fall: one sibling, one revive. They drift away as you grow.';
       if (t < 90 && !f.hidden) return 'Predators track movement. Press R while hidden to rest and recover.';
       if (t < 150) return 'Press B to open your Codex, and F for Science Mode.';
       return '';

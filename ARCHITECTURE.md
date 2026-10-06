@@ -2,7 +2,7 @@
 
 Browser game, plain JavaScript (no build step, no external libs), HTML5 Canvas 2D. All art is **procedural** (drawn with canvas code) and all audio is **procedural** (Web Audio). Read `GDD.md` for the design. Read `src/core.js` for the engine (do not edit it; if you need a change, describe it in your final report).
 
-Files load in this order (`index.html`): `core.js`, `world.js`, `webs.js`, `player.js`, `creatures.js`, `boss.js`, `edu.js`, `audio.js`, `ui.js`, `main.js`.
+Files load in this order (`index.html`): `core.js`, `world.js`, `webs.js`, `player.js`, `creatures.js`, `boss.js`, `edu.js`, `territory.js`, `save.js`, `audio.js`, `ui.js`, `main.js`.
 Each module is one file that ends by calling `Game.register(name, moduleObject)`. After registering, the object is available as `Game.<name>` (e.g. `Game.player.x`). **The module object itself is the public state + API.**
 
 | file | module name | priority | owner agent |
@@ -14,11 +14,14 @@ Each module is one file that ends by calling `Game.register(name, moduleObject)`
 | creatures.js | `creatures` | 40 | D: Ecosystem AI |
 | boss.js | `boss` | 45 | F: The Widow Matriarch boss fight (unlocks the Black Widow) |
 | edu.js | `edu` | 50 | E: Education, objectives, bestiary data |
+| territory.js | `territory` | 12 | G: Territory mode: calendar and seasons, lineage, Claim, heirloom webs, pantry, rival, Legacy scene |
+| save.js | `save` | 5 (`alwaysUpdate`) | H: Territory saves: slots, snapshots, autosave, export/import |
 | ui.js | `ui` | 100 | E: HUD, menus, title, screens |
 
 Update order = ascending priority. Modules may define: `init()` (once, at boot), `reset()` (new game / title; rebuild ALL state here — must be idempotent and fast), `update(dt)` (seconds, only while scene==='playing' unless `alwaysUpdate:true`), `lateUpdate(dt)`. Drawing is done by registering drawers in `init()`:
 `Game.addDrawer(Game.LAYER.X, ctx => {...})` (world space, camera transform already applied, use `Game.camera.view` / `Game.camera.inView(x,y,pad)` to cull) and `Game.addScreenDrawer(layer, ctx => {...})` (screen space 1280x720).
 Never call `ctx.save/restore` imbalance: core wraps each drawer in save/restore for you.
+Optional persistence hooks (Territory saves): `serialize() -> plain JSON-able object | null` and `deserialize(data)`. `Game.save` collects every module's slice under its module name and hands it back on load, in priority order; a module that has no `serialize` is simply not saved and is rebuilt by `reset()`. `deserialize` runs after the world has been rebuilt and must tolerate missing or malformed data (a save is untrusted input).
 
 **Robustness rules (important):**
 1. Other modules may be missing/broken. Guard every cross-module call: `if (Game.creatures && Game.creatures.list) ...`. Never throw at load time.
@@ -36,7 +39,8 @@ Never call `ctx.save/restore` imbalance: core wraps each drawer in save/restore 
 ```
 Game.unlocks.has(id) / .list() / .unlock(id) -> bool (true if new; emits species:unlocked) / .reload()   // saved in the store ('unlocks'); the starter is never locked
 Game.speciesInfo(id) -> entry (unknown id = the starter)      Game.pickSpecies(id?) -> the id a new game would use (locked/unknown -> saved choice -> starter)
-Game.newGame(mode?, species?)  // species: an unlocked id; omitted/locked/unknown = Game.settings.species, else the starter. Sets Game.state.species
+Game.newGame(mode?, species?, opts?)  // species: an unlocked id; omitted/locked/unknown = Game.settings.species, else the starter. Sets Game.state.species. opts {slot (1..3, Territory only; default 1), name (lineage name)}
+Game.loadGame(slot, kind?) -> bool   // Territory: restore a snapshot (see H. Game.save); false = nothing changed and Game.save.lastError says why
 Game.settings.species          // the spider chosen last (saved); the title's New Game opens a "Choose your spider" step after the mode card once 2+ are unlocked
 ```
 
@@ -51,7 +55,7 @@ Test injection: `Game.input.inject.keyDown('KeyW')`, `.keyUp`, `.click(x,y)`.
 ## Events — `Game.on(evt, fn)`, `Game.emit(evt, data)`
 | event | data | emitted by |
 |---|---|---|
-| `game:new` | – | core |
+| `game:new` | `{mode, slot, loaded?}` (`loaded` = a saved lineage was restored, not a fresh one) | core |
 | `scene:change` | `{from,to}` | core |
 | `sfx` | `{name, x?, y?, vol?}` (names in `Game.C.SFX`) | anyone |
 | `stage:change` | `{stage, prev}` | player |
@@ -89,6 +93,27 @@ Test injection: `Game.input.inject.keyDown('KeyW')`, `.keyUp`, `.click(x,y)`.
 | `mate:found` | – | creatures |
 | `courtship:done` | – | player |
 | `game:victory` | – | player |
+| `window:blur` | – the page lost focus (core emits it just before it pauses; save.js writes a suspend snapshot) | core |
+| `season:change` | `{season, prev}` (`spring|summer|autumn|winter`) Territory only | territory |
+| `territory:claimed` | `{x, y}` the Home Site moved (a new generation hatched elsewhere) | territory |
+| `territory:cp` | `{amount, total, reason}` Claim Points were earned | territory |
+| `territory:rank` | `{rank, name}` | territory |
+| `territory:night` | `{kept, total}` a night ended: how many heirloom webs held above half integrity | territory |
+| `territory:frost` | – a cold snap began | territory |
+| `territory:rival_started` / `rival_repelled` / `rival_left` | `{kind}` the summer rival | territory |
+| `territory:generation_end` | `{generation}` a mother laid; the Legacy scene opens | territory |
+| `territory:generation_begin` | `{generation, heirs, mutation}` the next generation hatched | territory |
+| `succession` | `{heirs}` an heir took over after a death (heirs left) | territory |
+| `lineage:ended` | `{summary}` the last heir fell | territory |
+| `web:heirloom` | `{web}` | territory |
+| `pantry:store` / `pantry:spoil` | `{kind}` | territory |
+| `pantry:full` | – | territory |
+| `goal:complete` | `{id, text, cp}` a Territory goal | edu |
+| `save:ready` | `{backend}` the storage backend answered | save |
+| `save:written` | `{slot, kind}` a snapshot is durably on disk | save |
+| `save:loaded` | `{slot, kind, fromBackup, readOnly, warning}` (`warning`: `'backup'|'older'|null`) | save |
+| `save:deleted` | `{slot, kind}` | save |
+| `save:error` | `{slot, kind, code, message}` | save |
 
 ## Module APIs
 
@@ -102,7 +127,7 @@ world.dayCount          // integer days elapsed
 world.light             // 0.08..1 brightness (never fully black; nights are readable)
 world.phase             // 'dawn'|'day'|'dusk'|'night'
 world.isNight() -> bool
-world.weather = { type:'clear'|'drizzle'|'rain'|'wind'|'fog', intensity:0..1, windX, windY }
+world.weather = { type:'clear'|'drizzle'|'rain'|'wind'|'fog'|'frost', intensity:0..1, windX, windY }   // 'frost' only in Territory winters (`Game.territory.weatherBias()` tilts the odds each season)
 world.exposure(x, y) -> 0..1   // 1 = open/exposed, 0 = fully covered (under leaf/bark/petal). Rain hurts exposed small spiders.
 world.obstacles         // array of circles {x,y,r,type}: rocks, twigs, stems, bark ridges (solid)
 world.resolve(x, y, r) -> {x, y}   // pushes a circle out of obstacles & clamps to world bounds; used by player and creatures
@@ -116,6 +141,10 @@ world.nearestAnchor(x, y, maxDist) -> anchor|null
 world.spawnPoints(zoneId, kind?) -> array of {x,y}   // for creatures; world provides ecological hints (e.g. 'flying' over flowers). Optional helper; creatures may also choose randomly with world.resolve()
 world.explored         // 2D Uint8Array grid for minimap fog: world.exploredCell = 64 (px per cell); world.markExplored(x,y,radius)
 world.drawMinimapTerrain(ctx, x, y, w, h)  // draws a cheap terrain overview into the given screen rect (pre-render to offscreen canvas once in reset())
+world.seed              // the fixed world seed (Territory saves store it and refuse a mismatch: the terrain is regenerated from it, never saved)
+world.serialize()/deserialize(d)   // clock, day count, weather, wetness, resource amounts and the explored map (bit-packed); the terrain itself is deterministic
+world.regrow()          // the winter turnover while a mother's Legacy scene plays: resources refill, weather clears
+world.forceWeather(type, intensity?)   // test helper; type may also be 'frost' (Territory winter: pale blue cast, frost on the screen edges)
 ```
 Drawers: BACKGROUND (ground textures per zone: leaf litter with detailed leaves/twigs/soil grain; oak bark with deep ridges/lichen/moss; flower garden with soil, grass blades, petals, stems), GROUND decor, RESOURCES (dew drops, nectar), SHELTER (shelter art), CANOPY (big leaves/petals the spider walks under; fade when player under them), WEATHER (rain streaks, fog, wind particles), DARKNESS (screen-space night tint + vignette; keep it readable). Pre-render static terrain into offscreen canvases (chunked) in `reset()`/`init()` for speed. Use `Game.util.makeCanvas`.
 Day/night: advance `time01` in `update(dt)` by `dt/Game.C.DAY_LENGTH`. Weather: random slow transitions, biased clear; rain only after the first day; emit events.
@@ -140,7 +169,13 @@ webs.speedBonusAt(x, y) -> multiplier>=1   // moving along one's own dragline/sh
 webs.nearestWeb(x, y, maxDist, filterFn?) -> web|null
 webs.checkCreature(c) -> web|null   // creatures.js may call this for a creature to test contact with a web (webs.js itself also scans Game.creatures.list each update)
 webs.vibration(web) -> intensity    // for effects
+// Territory (mechanics only; the rules live in territory.js)
+webs.setHeirloom(web, on) / webs.heirlooms() -> [web]   // web.heirloom: exempt from the web cap (enforceLimit) and drawn with a gold dashed thread
+webs.repair(web, amount) -> restored ; webs.damage(web, amount, cause, floor?) -> dealt   // a rival raid or a succession shake; at 0 the web falls unless `floor` keeps it alive
+webs.recycle(web, share) -> silk given back ; webs.keepOnly(fn)   // hold-X recycling; the winter turnover keeps only heirloom webs
+webs.serialize()/deserialize(d)   // each web as {id, type, seed, integrity, age, build, heirloom, ...}; strand geometry is rebuilt from the seed
 ```
+Frost (`world.weather.type === 'frost'`) wears exposed silk down faster than rain (cause `'frost'`).
 Behavior: Space (`spin`) = spin selected web at the player's position; Digit1–4 select. Line: anchors between the player and the nearest anchor/direction, ~200-320 px, stronger when anchored. Sheet: flat ellipse patch ~250 px wide that entangles ground-walking prey. Orb: radial+spiral orb (drawn beautifully, dew sparkle at dawn) catches flying prey. Retreat: silk tent that hides the player (`isSheltered`). Prey contact -> call `Game.creatures.trap(creature, web)` (creatures.js implements: creature becomes stuck & struggles; struggling shakes the web and emits vibration). Player biting a trapped creature gets a bonus (player.js handles). Rain/wind damages webs (`Game.world.weather`); big prey may break webs (`web:destroyed`). Webs decay slowly (age); dew adds sparkle. Max ~40 live webs (oldest fade out). Silk regen lives in player.js. Web drawing must look great: use thin bright strands with subtle glow, radial + spiral structure for orb, wind sway.
 Also draws a small "silk ghost preview" of where the selected web would go when Space is held or `web` key pressed (world-space drawer, WEBS layer).
 
@@ -169,12 +204,15 @@ player.species          // the Game.C.SPECIES entry this spider is (stats, palet
 player.stealthBase, player.venomPower   // stealth before the species' night bonus; share of a bite's damage that poisons prey (0 for the garden spider)
 player.slow(t, mul)     // stuck in sticky silk: move at mul x normal speed for t s (the stronger slow wins, the timer only extends); player.tangleT / tangleMul hold the state
 player.drawPortrait(ctx, speciesId, cx, cy, size, {stage=4, angle, silhouette, silColor, belly, alpha, t})   // that spider as it looks in play, fitted in a size x size box (silhouette = a locked one)
+player.shaken           // seconds left of the succession "shaken" state (15% slower); player.respawnHeir(pt, {growthLoss, meter, silk, shaken, invuln}) puts an heir in the field (territory.js calls it)
+player.serialize()/deserialize(d)   // body, meters, upgrades, mate progress, and a half-finished molt or egg-laying
 ```
+Territory (when `Game.territory.active`): a death asks `territory.deathScene(cause)` which screen follows (`succession` with heirs left, else `lineageended`), Brood's sibling revive is off, `reset()` starts at `territory.spawnPoint()` with `territory.inherited()` trait levels, an adult's mate only arrives from day 16 (`territory.mateAllowed()`), laying the egg sac calls `territory.onLaid(site)` which opens the Legacy scene, meters drain by `territory.metab`, E goes first to `territory.interact()`.
 Rules: move with WASD (sprint drains energy), obstacles via `Game.world.resolve`. Meters: hunger/hydration drain per STAGES rates × `drainMul`; energy drains while sprinting, regens while resting (R, in shelter/retreat is 3x). Siblings huddled around a resting player (`creatures.huddle`, max 3) add +15% energy regen, +20% healing and -12% hunger/thirst drain each. Starving/dehydrated -> hp loss; hp regens when meters are healthy and resting. Rain damages small exposed spiders (`world.exposure`), being on the ground at night is riskier only through predators. Interact (E): drink near dew (`Game.world.nearestResource(x,y,'dew',radius+18)`) / nectar, enter/exit shelters, mate interactions. Eating: bite creature -> `Game.creatures.attackAt`; when a creature dies by player bite, creatures.js calls `Game.player.feed(hunger, growth, kind)` (value from KINDS). Growth from eating + `edu` objectives (`addGrowth`). Molt: at `growth >= growthNeeded` (and stage<4): `Game.setScene('molting')`, emit `molt:start`, ui shows the choice screen and calls `Game.player.chooseUpgrade(id)` -> then player plays a molt animation (~6 s, `moltTimer`, vulnerable), `stage+1`, `stage:change`, `molt:end`, `Game.camera.targetZoom = STAGES[stage].zoom`, silk/hp refill partially. Web spin availability is by `Game.C.STAGES[stage].webs`.
 Ending (stage 4): `Game.creatures.spawnMate()` is called by player.js on reaching adult; find the mate (glowing pheromone trail hint via `player.mateHint` vector shown by ui), press E near the mate with hunger>35 -> courtship mini-sequence (short dance, `courtship:done`), then go to an egg site (`world.shelters` with `eggSite`), press E to lay the egg sac -> `player.mate.laid=true`, emit `game:victory` and `Game.setScene('victory')`.
 Death: `Game.setScene('gameover')` after a brief death animation; ui offers retry.
 Species (`Game.C.SPECIES`): `Game.state.species` picks the spider in `reset()`. The Black Widow is glossy black when grown (pale and striped as a hatchling, with orange-red spots that fade as she molts), has a round abdomen and longer legs, bites 35% harder, has 25% more silk, hides 20% better at night, and her bite poisons prey (`venomPower`); she is 6% slower with 10% less health. Her red hourglass is on her underside, so it only shows while she hangs belly-up to spin or rest (`bellyK`).
-Game modes (`Game.C.MODES`, chosen on the title screen: New Game opens a "Choose your journey" picker; the last choice is saved in `Game.settings.mode` and highlighted next time; `Game.newGame(mode)` sets `Game.state.mode`, omitted = the saved one): **Brood** (default) has the sibling revive below; **Survival** is one life, and siblings still warn and huddle but never revive you. Survival hides the HUD Siblings row.
+Game modes (`Game.C.MODES`, chosen on the title screen: New Game opens a "Choose your journey" picker; the last choice is saved in `Game.settings.mode` and highlighted next time; `Game.newGame(mode)` sets `Game.state.mode`, omitted = the saved one): **Brood** (default) has the sibling revive below; **Survival** is one life, and siblings still warn and huddle but never revive you. Survival hides the HUD Siblings row. **Territory** (the third card, tagged "Saves") is the persistent campaign: it picks a save slot and a lineage name first, shows a calendar, the Claim and the heirs in the HUD instead of the Siblings row, and replaces the revive with succession (see G. `Game.territory`).
 Sibling revive (Brood mode only): a fatal blow (`die()`) first asks `Game.creatures.claimSibling(x, y)` for a sibling. If one answers, the spider is *downed* instead (`player.reviving`, `player:downed`; no `player:died`). The sibling runs in, settles on the spider and gives its life (`kin:sacrifice`); the spider then gets up with 50% health, hunger/hydration/energy lifted to at least 35 (so a death by starvation doesn't repeat) and 4 s of invulnerability (`player:revived`), and hunters next to it are startled off. 1 sibling = 1 revive; with none left the next fatal blow is a real death. Tuning: `REVIVE_*` at the top of player.js, `SAC_*` in creatures.js. Siblings are a finite pool (5 at hatching, `updateKinCount` lets them drift away as you grow: 4/3/1/0), so revives run out on their own.
 Camera: set `Game.camera.targetZoom` per stage; camera target = player.
 
@@ -202,7 +240,10 @@ creatures.claimSibling(x, y) -> creature|null     // player.js: the nearest such
 creatures.startle(x, y, r) -> n                   // hunters within r flee for a few seconds and won't re-engage straight away (used when a sibling's gift lands)
 creatures.KINDS.widow                             // the Widow Matriarch (`boss: true`, `ai: 'boss'`): a creature like any other, but boss.js is her brain (creatures calls `Game.boss.think(c, dt)`, routes damage through `Game.boss.onHurt(c, dmg, by)` and asks `Game.boss.threat(c)` for the danger meter); `creatures.pickSpawnPos` keeps wanderers out of `Game.boss.inArena`
 creatures.huddle -> 0..3                            // siblings tucked in around the resting player. player.js (HUDDLE_* constants) turns that into faster energy/health recovery and slower hunger/thirst drain; `player.huddled` mirrors it
+creatures.remove(c) ; creatures.syncKin(instant?)   // Territory: take a creature out (a wrapped prey, a rival leaving); make the siblings on screen match the heirs left
+creatures.serialize()/deserialize(d)   // the living creatures near the player, the heirs and a rival in progress; the population refills around the spider on load
 ```
+Territory: season multipliers (`territory.popMul(kind)`) scale the population targets (summer prey, autumn birds, winter scarcity and no flyers); `kinWanted()` is the heirs left; a creature with `rival` set (1 = raiding, 2 = driven off) is the summer rival: it patrols toward the nearest heirloom web (`territory.rivalTarget`), tears at it (`territory.rivalRaid`) and never sleeps or despawns.
 AI: prey wander/graze/flee (flee from player if `dist < detection * player.stealth` and player not hidden), predators patrol/hunt the player when within `detection * player.stealth` (hidden players are found only when within ~radius*2 or via `player.senseRadius` for the player only), attack deals damage via `Game.player.damage()` and sets `Game.state.danger`. Predators dislike webs (they may break them) but small predators get stuck. Birds: telegraphed shadow that drifts over exposed ground (`world.exposure>0.6`) then strikes; being covered saves you. Population: maintain target counts per zone/time-of-day by despawning far-offscreen creatures and respawning at world.spawnPoints out of view. Balanced difficulty: hatchling zone has springtails/mites/midges plentiful and only slow, distant threats; danger ramps by stage and zone (bark = ants/centipedes, garden = wasps/mantis/birds). Creatures use `Game.world.resolve` for obstacle avoidance.
 Drawing: rich procedural sprites per kind (legs, antennae, wings that flutter, carapace shine, colored patterns) at CREATURES_LOW/HIGH (flyers high), with health/state cues (stuck creatures wiggle; alerted creatures show a small "!" mark). Draw small unobtrusive detection rings only when `Game.settings.science` is on.
 
@@ -215,6 +256,7 @@ boss.state         'dormant' | 'intro' | 'fight' | 'defeated' | 'gone' (already 
 boss.lair {x,y,r}  picked at reset from the generated world: open bark, away from the hatch point and shelters, no canopy over it (deterministic)
 boss.c, boss.phase (1..3), boss.hpFrac(), boss.active() (intro or fight), boss.tooSmall, boss.discovered
 boss.inArena(x,y,pad), boss.threat(c), boss.start() (wake her at once), boss.TUNING {LUNGE,SPIT,SLAM}, boss.MIN_STAGE/WAKE_R/NOTICE_R/ARENA_R
+boss.serialize()/deserialize(d)   // a fight in progress is saved as dormant (she resets, as when the player flees); a beaten Matriarch stays 'gone'
 ```
 Flow: she sleeps on her lair (visible tangle of silk, egg sacs, prey husks; a pale tripwire ring at `WAKE_R` is drawn for a spider big enough to answer it). A sub-adult (stage 3) or bigger crossing the ring wakes her (`boss:start`): a 2.6 s intro (she rears, the red hourglass shows, nothing can hurt her), then the fight. A smaller spider is warned off once (`boss:notice`) and ignored; it cannot hurt her. An adult faces a Matriarch with 40% more health (340 -> 476).
 Attacks (each shows first; her opening is the player's chance): **lunge** (0.6 s windup with the lane drawn on the ground, then a locked 0.22 s dash for 16; sidestep the lane; she is winded for ~1 s), **silk spit** (fan of 3 globs, 5 in phase 3: 5 damage + slow, or a sticky patch where they land; used when you keep your distance), **slam** (phase 2+: 0.95 s windup with the ring drawn, 24 to everyone inside it, then stunned for 1.7 s). Phases at 60% and 30% health: faster, shorter cooldowns, a roar between. Bites do +35% while she is winded or stunned; her armour takes 12% off.
@@ -232,6 +274,8 @@ edu.ANATOMY -> data for an interactive "anatomy" panel: parts [{id, name, x,y (0
 edu.tip() -> string   // contextual hint (used by ui HUD for the first minutes; consults player state)
 edu.scienceInfo(entity) -> string[]  // detailed lines for Science Mode (creature, web, player, resource)
 edu.foodWeb() -> {nodes, edges}  // for a food-web diagram derived from Game.creatures.KINDS.diet
+edu.goals / edu.goalsDone / edu.TERRITORY_GOALS   // Territory goals (stand beside the survival objectives, +Claim Points via territory.addCP); edu.nextGeneration() resets the per-generation parts
+edu.serialize()/deserialize(d)   // goals done and in progress, and the heirloom tutorial flag; unlocked facts are global (Game.store) and never part of a save
 ```
 Objectives are generated per stage (e.g. hatchling: "Drink from dew", "Eat 3 springtails", "Reach a shelter", "Survive your first night"; spiderling: "Spin a dragline", "Catch prey in a web"; juvenile: "Build a sheet web / retreat", "Escape a predator", "Explore the bark zone"; sub-adult: "Build an orb web", "Catch a flying insect", "Survive a rainstorm", "Visit the flower garden"; adult: "Find a mate", "Lay your egg sac"). Progress driven by events (`player:ate`, `web:spun`, `web:trapped`, `zone:enter`, `weather:change`, `day:phase`...). Completing an objective calls `Game.player.addGrowth(reward)` and emits `objective:complete`. An objective def may have `skip: () => bool` (left out when it no longer applies): the sub-adult list has the optional "Defeat the Widow Matriarch" (`ev: 'boss:defeated'`) until the Black Widow is unlocked.
 Facts unlock on events (first bite, first molt, first web, seeing a kind via `creature:seen`, zones, weather, night...). Every unlock emits `fact:unlock` and a `sfx` `unlock`.
@@ -239,6 +283,39 @@ Facts unlock on events (first bite, first molt, first web, seeing a kind via `cr
 ### E2. `Game.ui` (ui.js) — priority 100, `alwaysUpdate: true`
 Owns all screens. Scenes: `title` (animated: slow camera drift over the world, glowing title "Arachnid Origins — The Spider's Journey", buttons New Game / Continue-hint / Settings / How to Play / Bestiary / Credits), `playing` HUD, `paused` (Resume, Settings [master/music/sfx sliders, mute, screen shake, science mode, hints], Bestiary, Quit to Title), `molting` (skill-tree/upgrade choice: 3 cards from `Game.player.offerUpgrades()` + current upgrade tree overview; keyboard 1-3/arrows+enter and mouse; shows stage lore from `edu.STAGE_LORE`), `codex` (tabs: Bestiary [grid of `Game.creatures.KINDS`, silhouettes for unseen kinds, details for seen], Encyclopedia [facts by category, unlocked/locked counts], Anatomy [spider diagram], Food Web), `gameover` (cause-of-death flavor text + science note, stats, Retry/Title), `victory` (life-cycle recap, stats, egg sac scene, Play Again/Title). The codex has a fifth tab, **Spiders**: the roster of playable spiders (locked ones are silhouettes with how to unlock them), perks and life stages. Title: New Game -> mode cards -> (with 2+ spiders unlocked) "Choose your spider" cards. In play: the Matriarch's health bar (top centre) with an "Exposed - bite her!" cue, boss banners that jump the banner queue, a lair marker on the minimap once you are a sub-adult, the species name in the HUD/pause/end screens when it is not the starter, and an "unlocked" card after she falls (end screens mention a spider unlocked that run, and tease the locked one after a win).
 HUD: minimal — health/hunger/hydration/energy bars (with icons drawn in code), silk meter, growth bar with stage name, hotbar for webs (locked/unlocked, cost, key), objectives (top-right, max 3), minimap (bottom-right, fog of war via `Game.world.explored`, markers: player, mate hint, shelters when explored, `M` toggles size), day/night clock + weather icon, zone-name banner on `zone:enter`, fact-unlock toast (bottom-left) on `fact:unlock`, damage vignette on `player:damaged`, low-meter pulse warnings, contextual prompts near interactables ("E — Drink"), hint text from `edu.tip()` for the first few minutes when `Game.settings.hints`. Science Mode (F): overlays with `edu.scienceInfo()` on creatures/webs near cursor plus numeric meters. Pause when `Game.pause()`; ui handles the `pause` action (Esc/P) and `codex` action (B). Use crisp, elegant styling (dark translucent panels, warm amber accent, subtle animation).
+
+### G. `Game.territory` (territory.js) — priority 12
+Territory mode (design: `territory-mode-gdd.md`). Inert unless `Game.state.mode === 'territory'` (`territory.active`); every hook other modules call is guarded by it, so Brood and Survival never see any of it.
+```
+territory.calendar() -> {dayCount, year, day (1..36), season, seasonName, dayInSeason, daysLeftInSeason, progress, label}   // a 36-day year of four 9-day seasons, read from world.dayCount
+territory.season() / SEASONS[]        // {id, name, blurb, prey[start,end], hunger, thirst, fresh (days food keeps), gap, weather{...}, ...}
+territory.weatherBias() / popMul(kind) / healMul() / mateAllowed() / matingNote()   // the hooks world, creatures and player read
+territory.lineageName, lineage {heirs, generations[{n, born, status, stage, deaths[], clutch, laid, traits[], mutation, stats}]}, longest
+territory.home {shelterId, x, y}, claimRadius(), inClaim(x, y, pad?), spawnPoint()
+territory.cp, rank (1..5), rankInfo(), nextRank(), addCP(n, reason), RANKS[]   // Claim 0 / Hold 25 / Domain 75 / Stronghold 150 / Dominion 300 CP; radius, heirloom slots, pantry size, trait slots and bonus heirs grow with rank
+territory.heirloomWebs(), canMark(web), markHeirloom(web), repairCost(web), repairWeb(web), recycleWeb(web)
+territory.pantry [{id, kind, nutrition, fresh, day}], canStore(), storeCheck(creature) -> null | reason, store(creature), eatPantry()
+territory.cand / prompt() / interact(pressed, held, dt) / recycleProgress()   // what E does underfoot (wrap prey, mark or repair a web); hold X recycles
+territory.rival, rivalPos(), rivalTarget(c), rivalRaid(c, web, dt), RIVAL, CP   // one summer rival a year, raids heirloom webs, driven off at half health (+5 CP)
+territory.succession, deathScene(cause), completeSuccession(), ended, foundNewLine()   // heirs and the Setback; the line ending; starting over in the same slot
+territory.legacy, clutchPreview(), onLaid(site), legacyToggle(id), runWinter(), legacyConfirm()   // the Legacy scene: clutch, inherited traits (one level below the mother's), mutation, winter fast-forward, the next generation
+territory.inherited() -> {traitId: level} | null   // read by player.reset() for the new hatchling
+territory.serialize()/deserialize(d)/resumeScene()
+```
+Tuning constants are at the top of territory.js (starting points; see the GDD, section 10). `territory.rng` is replaceable so tests can force a mutation.
+
+### H. `Game.save` (save.js) — priority 5, `alwaysUpdate: true`
+Territory saves. Three slots; each holds up to three snapshots: `autosave` (every season change, molt, laying and new generation, and after 5 minutes of calm play), `manual` (Pause > Save, and resting in the home retreat) and `suspend` (written when the window loses focus and by Save & Quit; **one-shot**: loading it spends it, and Continue prefers it). The API is synchronous over an in-memory cache; the storage backend (IndexedDB, else localStorage, else memory) is written to asynchronously through a safe write (temporary key, read back, `.bak` of the old snapshot, then the real key). A snapshot is `{schema, gameVersion, savedAt, kind, meta, seed, time, stats, <module name>: module.serialize(), checksum}`; the checksum (FNV-1a over the canonical JSON) rejects damage, `schema` runs through a migration chain, and the world seed must match.
+```
+save.ready, save.backend.name, save.readOnly, save.active, save.lastError, save.lastLoad
+save.slots() -> [{slot, empty, name, meta, savedAt, kinds, hasSuspend, hall[]}] ; hasAny() ; latest() ; firstFree() ; pick(slot) -> kind
+save.write(slot, kind) -> bool ; read(slot, kind?) -> doc|null ; delete(slot, kind?) ; endLine(slot, summary)   // endLine: the line died out, it goes to the slot's Hall of Lines and the slot is freed
+save.exportSlot(slot) / download(slot) / importText(slot, text) / importSlot(file, slot)   // .aosave files
+save.requestAutosave(reason) ; save.canWrite() ; save.setBackend(b)   // b = {name, loadAll(keys, cb), put(k, text, cb), get(k, cb), del(k, cb)}
+save.beginLoad(slot, kind?) / apply(doc) / finishLoad(info) / failLoad(info, e)   // the three steps of Game.loadGame
+save.acquire(slot) / release() / leaseHeldElsewhere(slot)   // one tab per slot (a lease key with a 15 s TTL); another tab's slot opens read-only
+```
+A damaged snapshot falls back to its `.bak`, then to the slot's other kinds (with a warning shown on the Welcome back card). Starting a new lineage in a slot clears its old snapshots (its Hall of Lines stays), except in a read-only tab. Brood and Survival are never saved.
 
 ### main.js (lead-owned)
 ```
@@ -255,5 +332,6 @@ window.addEventListener('load', () => { Game.boot(document.getElementById('game'
 * Sound: emit `Game.emit('sfx', {name:'bite', x, y})`; never touch Web Audio outside audio.js.
 
 ## Testing
+Territory tests: `tools/test_save.js` (round trip, kinds and backups, corruption and migration, one tab per slot, export/import, autosave triggers, an asynchronous fake IndexedDB, failing backends), `tools/test_seasons.js` (calendar, season effects, weather odds, frost, the mating season), `tools/test_territory.js` (Claim and Rank, heirloom webs, pantry, Claim Points, the summer rival), `tools/test_generations.js` (succession, lineage end, clutch, Legacy scene, inheritance and mutation), `tools/test_territory_ui.js` (every Territory screen and the HUD, read from the canvas text).
 Tests: `tools/test_species.js` (species data, unlocks, the Black Widow's stats/art/poison, the New Game flow, the Spiders tab), `tools/test_boss.js` (the lair, waking, every attack and phase, the leash, defeat and unlock, plus scripted fairness fights; `--quick` skips those).
 `node tools/harness.js` loads all `src/*.js` in a Node `vm` context with a real headless canvas (`@napi-rs/canvas`), boots the game, runs N simulated seconds with scripted input, asserts `Game.errors.length === 0`, and can write PNG screenshots (`tools/shots/*.png`). Useful helpers exposed by the harness: see the header of `tools/harness.js`. Use it constantly; view PNGs with the Read tool to check your art. Run `node --check src/yourfile.js` for syntax.

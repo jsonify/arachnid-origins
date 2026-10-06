@@ -466,14 +466,27 @@
   }
 
   // ------------------------------------------------------------- menu data
-  const TITLE_ITEMS = [
+  const TITLE_BASE = [
     { id: 'new', label: 'New Game' }, { id: 'settings', label: 'Settings' }, { id: 'howto', label: 'How to Play' },
     { id: 'bestiary', label: 'Bestiary' }, { id: 'credits', label: 'Credits' },
   ];
-  const PAUSE_ITEMS = [
+  // Continue and Load Game appear once a Territory save exists
+  function titleItems() {
+    const items = TITLE_BASE.slice(0, 1);
+    if (Game.save && Game.save.hasAny && Game.save.hasAny()) items.push({ id: 'continue', label: 'Continue', tall: true }, { id: 'load', label: 'Load Game' });
+    return items.concat(TITLE_BASE.slice(1));
+  }
+  const PAUSE_BASE = [
     { id: 'resume', label: 'Resume' }, { id: 'settings', label: 'Settings' }, { id: 'howto', label: 'How to Play' },
     { id: 'bestiary', label: 'Bestiary & Codex' }, { id: 'quit', label: 'Quit to Title' },
   ];
+  const isTerritory = () => Game.state.mode === 'territory' && !!(Game.territory && Game.territory.active);
+  // Territory adds Save, Save & Quit, the Territory and Lineage screens and Export
+  function pauseItems() {
+    if (!isTerritory()) return PAUSE_BASE;
+    return [{ id: 'resume', label: 'Resume' }, { id: 'save', label: 'Save' }, { id: 'saveQuit', label: 'Save & Quit' }, { id: 'territory', label: 'Territory' }, { id: 'lineage', label: 'Lineage' },
+      { id: 'settings', label: 'Settings' }, { id: 'howto', label: 'How to Play' }, { id: 'bestiary', label: 'Bestiary & Codex' }, { id: 'export', label: 'Export Save' }, { id: 'quit', label: 'Quit to Title' }];
+  }
   const SETTINGS_ROWS = [
     { key: 'master', label: 'Master volume', type: 'slider' },
     { key: 'music', label: 'Music', type: 'slider' },
@@ -487,8 +500,17 @@
     { key: 'changelog', label: 'Changelog', type: 'link', desc: 'What changed in each version' },
   ];
 
-  const titleRects = () => listRects(TITLE_ITEMS.length, W / 2, 312, 330, 48, 11);
-  const pauseRects = () => listRects(PAUSE_ITEMS.length, W / 2, 262, 340, 50, 11);
+  function titleRects() {
+    const items = titleItems(), n = items.length;
+    if (n <= 5) return listRects(n, W / 2, 312, 330, 48, 11);
+    const out = []; let y = 302;   // seven buttons (saves exist): tighter, with a taller Continue card
+    items.forEach(it => { const h = it.tall ? 62 : 42; out.push({ x: W / 2 - 165, y, w: 330, h }); y += h + 8; });
+    return out;
+  }
+  function pauseRects() {
+    const n = pauseItems().length;
+    return n <= 5 ? listRects(n, W / 2, 262, 340, 50, 11) : listRects(n, W / 2, 238, 340, 38, 6);
+  }
   function settingsLayout() {
     const w = 660, rowH = 44, gap = 6, h = 84 + SETTINGS_ROWS.length * (rowH + gap) + 92, x = (W - w) / 2, y = Math.round((H - h) / 2);
     const rows = SETTINGS_ROWS.map((def, i) => {
@@ -499,6 +521,10 @@
     return { x, y, w, h, rows, back };
   }
   function modeLayout() {
+    if (C.MODES.length > 2) {   // Brood, Survival and Territory: three narrower cards in a wider panel
+      const n = C.MODES.length, cw = 316, ch = 330, gap = 24, bw = n * cw + (n - 1) * gap + 80, b = { x: (W - bw) / 2, y: 96, w: bw, h: 530 };
+      return { b, cards: C.MODES.map((m, i) => ({ x: b.x + 40 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
+    }
     const b = { x: (W - 840) / 2, y: 110, w: 840, h: 500 }, n = C.MODES.length, cw = 372, ch = 300, gap = 36, x0 = b.x + (b.w - (n * cw + (n - 1) * gap)) / 2;
     return { b, cards: C.MODES.map((m, i) => ({ x: x0 + i * (cw + gap), y: b.y + 84, w: cw, h: ch })) };
   }
@@ -559,6 +585,19 @@
     Game.on('boss:start', () => { pushBossBanner({ title: 'Widow Matriarch', sub: 'Latrodectus mactans  \u00b7  Guardian of the Old Oak Bark', dur: 3.6 }); ui.bossLag = 1; });
     Game.on('boss:retreat', () => { pushBossBanner({ title: 'She retreats', sub: 'She heals in her lair while you are away', dur: 3.2 }); });
     Game.on('boss:defeated', () => { pushBossBanner({ title: 'The Matriarch falls', sub: 'Her lair is yours', dur: 3.6 }); });
+    // ---- Territory
+    Game.on('season:change', (d) => { const S = Game.territory && Game.territory.SEASONS.find(x => x.id === (d && d.season)); if (S && Game.time.t > 1) pushBanner({ title: S.name, sub: S.blurb, kind: 'zone', dur: 4.6 }); });
+    Game.on('territory:generation_begin', (d) => { const cal = Game.territory.calendar(); ui.fade = { t0: real(), dur: 2.2 }; pushBanner({ title: 'Year ' + cal.year + '  \u00b7  Spring', sub: 'Generation ' + ((d && d.generation) || 1) + ' hatches into the territory you built', kind: 'zone', dur: 5 }); });
+    Game.on('succession', (d) => { ui.fade = { t0: real(), dur: 1.6 }; const n = (d && d.heirs) || 0; pushBanner({ title: 'An heir takes over', sub: n > 0 ? n + (n === 1 ? ' heir' : ' heirs') + ' left in the line' : 'The last heir: no more after this', kind: 'kin', dur: 4.5 }); });
+    Game.on('save:written', (d) => { if (d && d.kind === 'suspend') return; pushToast({ kind: 'note', head: d && d.kind === 'manual' ? 'GAME SAVED' : 'CHECKPOINT', title: d && d.kind === 'manual' ? 'Saved to slot ' + d.slot : 'Autosaved', icon: 'check', accent: COL.good, dur: 2.6 }); });
+    Game.on('save:error', (d) => { pushToast({ kind: 'note', head: 'SAVE PROBLEM', title: (d && d.message) || "Couldn't save", sub: d && d.code === 'storage' ? 'Browser storage refused the write. Try Export Save.' : '', icon: 'x', accent: COL.bad, dur: 6 }); });
+    Game.on('save:loaded', (d) => { ui.welcome = { t0: real() + 0.4, dur: 11, warning: d && d.warning, kind: d && d.kind, readOnly: d && d.readOnly }; });
+    Game.on('territory:rank', (d) => { pushToast({ kind: 'note', head: 'TERRITORY RANK UP', title: (d && d.name) || 'New rank', sub: 'A bigger Claim, more heirloom webs, a bigger pantry', icon: 'star', accent: COL.amberHi, dur: 6 }); });
+    Game.on('goal:complete', (d) => { pushToast({ kind: 'note', head: 'TERRITORY GOAL COMPLETE', title: (d && d.text) || 'Goal', sub: d ? '+' + d.cp + ' Claim Points' : '', icon: 'check', accent: COL.good, dur: 5 }); });
+    Game.on('territory:rival_started', (d) => { const K = KINDS(), k = K && d && K[d.kind]; pushBossBanner({ title: 'A rival in your Claim', sub: (k ? k.name : 'A hunting spider') + ' is tearing at your heirloom webs. Drive it off!', dur: 5 }); });
+    Game.on('territory:rival_repelled', () => { pushBossBanner({ title: 'Rival driven off', sub: '+5 Claim Points', dur: 3.6 }); });
+    Game.on('territory:night', (d) => { if (d && d.kept) pushToast({ kind: 'note', head: 'THROUGH THE NIGHT', title: d.kept + (d.kept === 1 ? ' heirloom web held' : ' heirloom webs held'), sub: '+' + d.kept + ' Claim ' + (d.kept === 1 ? 'Point' : 'Points'), icon: 'moon', accent: COL.info, dur: 5 }); });
+    Game.on('pantry:spoil', (d) => { pushToast({ kind: 'note', head: 'PANTRY', title: 'A stored ' + titleize((d && d.kind) || 'meal') + ' spoiled', icon: 'x', accent: COL.bad, dur: 3.5 }); });
     Game.on('species:unlocked', (d) => { const id = d && d.id; if (!id) return; ui.newSpecies.push(id); ui.unlockCard = { id, t0: real() + 1.8, dur: 11, played: false }; });
     Game.addScreenDrawer(Game.LAYER.HUD, drawHUDLayer);
     Game.addScreenDrawer(Game.LAYER.MENU, drawMenuLayer);
@@ -569,6 +608,7 @@
     ui.toasts = []; ui.banners = []; ui.flash = 0; ui.stageCard = null; ui.prompt = null; ui.picked = null; ui.newObj = {};
     ui.unlockCard = null; ui.newSpecies = []; ui.bossLag = 1;
     ui.hint = { text: '', t0: 0, shownAt: 0, last: '' }; ui.sub = null; ui.idx = {}; ui.death = { cause: null }; ui.dragging = null;
+    ui.welcome = null; ui.fade = null; ui.legacy = null;
     fog.t = -9; ui.molt = { offers: [], t0: 0, chosen: -1, stamp: -1 };
   };
 
@@ -583,6 +623,8 @@
       ui.final = snapshotStats();
     }
     if (d.to === 'victory') ui.final = snapshotStats();
+    if (d.to === 'succession' || d.to === 'lineageended') ui.final = snapshotStats();
+    if (d.to === 'legacy') { ui.final = snapshotStats(); ui.legacy = { idx: 0, t0: real(), wt0: 0 }; }
     if (d.to === 'title') { Game.camera.targetZoom = 1.25; }
   }
 
@@ -621,6 +663,10 @@
       case 'codex': updateCodex(nav, dt); break;
       case 'gameover': updateEnd(nav, 'gameover'); break;
       case 'victory': updateEnd(nav, 'victory'); break;
+      case 'territory': updateTerritoryScreen(nav); break;
+      case 'succession': updateSuccession(nav); break;
+      case 'lineageended': updateLineageEnded(nav); break;
+      case 'legacy': updateLegacy(nav, dt); break;
       default: break;
     }
   };
@@ -630,7 +676,9 @@
     const act = listInput('title', titleRects(), nav);
     if (act < 0) return;
     sfx('ui_click');
-    const id = TITLE_ITEMS[act].id;
+    const id = titleItems()[act].id;
+    if (id === 'continue') { const c = Game.save.latest(); if (c && !Game.loadGame(c.slot)) flashMsg(Game.save.message(Game.save.lastError), true); return; }
+    if (id === 'load') { openSlots('load'); return; }
     if (id === 'new') { ui.sub = 'mode'; ui.idx.mode = Math.max(0, C.MODES.findIndex(m => m.id === Game.settings.mode)); }   // choose a mode first; the last choice is highlighted
     else if (id === 'bestiary') { ui.codex.tab = 0; Game.setScene('codex'); }
     else { ui.sub = id; ui.idx[id] = 0; }
@@ -641,8 +689,13 @@
     if (nav.back || nav.pause) { sfx('ui_back'); Game.resume(); return; }
     const act = listInput('pause', pauseRects(), nav);
     if (act < 0) return;
-    const id = PAUSE_ITEMS[act].id; sfx(id === 'resume' ? 'ui_back' : 'ui_click');
+    const id = pauseItems()[act].id; sfx(id === 'resume' ? 'ui_back' : 'ui_click');
     if (id === 'resume') Game.resume();
+    else if (id === 'save') doSave(false);
+    else if (id === 'saveQuit') doSave(true);
+    else if (id === 'export') doExport();
+    else if (id === 'territory') Game.setScene('territory');
+    else if (id === 'lineage') { ui.codex.tab = CODEX_TABS.indexOf('Lineage'); Game.setScene('codex'); }
     else if (id === 'bestiary') { Game.setScene('codex'); }
     else if (id === 'quit') { ui.sub = 'confirmQuit'; ui.idx.confirmQuit = 1; }
     else { ui.sub = id; ui.idx[id] = 0; }
@@ -657,7 +710,15 @@
       if (act === 0) { sfx('ui_click'); ui.sub = null; Game.toTitle(); } else if (act === 1) { sfx('ui_back'); ui.sub = null; }
       return;
     }
-    if (sub === 'species' && nav.back) { sfx('ui_back'); ui.sub = 'mode'; return; }   // back to the mode cards
+    if (sub === 'name') return updateName(nav);   // typing: Backspace edits the text, only Esc goes back
+    if (sub === 'species' && nav.back) { sfx('ui_back'); ui.sub = ui.pendingMode === 'territory' ? 'slots' : 'mode'; return; }   // back to the mode cards (Territory: the slots)
+    if (sub === 'slots') return updateSlots(nav);
+    if (sub === 'confirmOverwrite') {
+      if (nav.back || nav.pause) { sfx('ui_back'); ui.sub = 'slots'; return; }
+      const act = listInput('confirmOverwrite', confirmRects(), nav, { horizontal: true });
+      if (act === 0) { sfx('ui_click'); afterSlot(); } else if (act === 1) { sfx('ui_back'); ui.sub = 'slots'; }
+      return;
+    }
     if (sub === 'changelog' && nav.back) { sfx('ui_back'); ui.sub = 'settings'; return; }   // back to the settings rows
     if (nav.back || (owner === 'paused' && nav.pause)) { sfx('ui_back'); ui.sub = null; return; }
     if (sub === 'settings') return updateSettings(nav);
@@ -672,12 +733,14 @@
   // New Game -> pick a mode (cards side by side; arrows / mouse to choose, Enter / click to begin). Once a second spider is unlocked a second
   // step follows, "Choose your spider"; with only the starter there is nothing to choose and the game begins at once.
   function startGame(mode, species) {
+    if (mode === 'territory') { ui.pendingSpecies = species || Game.pickSpecies(); goName(); return; }   // Territory also needs a slot and a lineage name
     ui.sub = null;
     if (Game.settings.mode !== mode) setSetting('mode', mode);   // remembered for next time and for Try Again
     if (species && Game.settings.species !== species) setSetting('species', species);
     Game.newGame(mode, species);
   }
   function chooseMode(mode) {
+    if (mode === 'territory') { ui.pendingMode = mode; ui.nameText = ''; openSlots('new'); return; }   // slot first, then spider, then name
     if (Game.unlocks.list().length < 2) { startGame(mode); return; }
     ui.pendingMode = mode; ui.sub = 'species';
     ui.idx.species = Math.max(0, C.SPECIES.findIndex(s => s.id === Game.pickSpecies()));   // the spider played last is highlighted
@@ -698,7 +761,21 @@
   function pickSpecies(i) {
     const s = C.SPECIES[i]; if (!s) return;
     if (!Game.unlocks.has(s.id)) { sfx('ui_back'); return; }   // still locked: the card says how to unlock it
-    sfx('ui_click'); startGame(ui.pendingMode, s.id);
+    sfx('ui_click');
+    if (ui.pendingMode === 'territory') { ui.pendingSpecies = s.id; goName(); return; }
+    startGame(ui.pendingMode, s.id);
+  }
+  // Territory: after the slot, the spider (once a second one is unlocked), then the lineage's name
+  function afterSlot() {
+    if (Game.unlocks.list().length < 2) { ui.pendingSpecies = Game.pickSpecies(); goName(); return; }
+    ui.pendingMode = 'territory'; ui.sub = 'species'; ui.idx.species = Math.max(0, C.SPECIES.findIndex(s => s.id === Game.pickSpecies()));
+  }
+  function goName() { ui.sub = 'name'; ui.nameText = ui.nameText || ''; ui.idx.name = 0; }
+  function startTerritory() {
+    ui.sub = null;
+    if (Game.settings.mode !== 'territory') setSetting('mode', 'territory');
+    const sp = ui.pendingSpecies || Game.pickSpecies(); if (Game.settings.species !== sp) setSetting('species', sp);
+    Game.newGame('territory', sp, { slot: ui.pendingSlot || 1, name: (ui.nameText || '').trim() });
   }
   function updateSpecies(nav) {
     const L = speciesLayout(), n = L.cards.length, key = 'species';
@@ -708,7 +785,7 @@
     if (nav.right || nav.down) i = setIdx(key, i + 1, n);
     if (nav.moved) for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k]) && k !== i) i = setIdx(key, k, n);
     if (nav.click) {
-      if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = 'mode'; return; }
+      if (inRect(nav.mx, nav.my, subBackRect(L.b.y, L.b.h))) { sfx('ui_back'); ui.sub = ui.pendingMode === 'territory' ? 'slots' : 'mode'; return; }
       for (let k = 0; k < n; k++) if (inRect(nav.mx, nav.my, L.cards[k])) { ui.idx[key] = k; pickSpecies(k); return; }
     }
     if (nav.confirm) pickSpecies(i);
@@ -777,6 +854,7 @@
     const I = Game.input;
     if (nav.pause) { sfx('ui_click'); Game.pause(); return; }
     if (nav.codex) { sfx('ui_click'); Game.setScene('codex'); return; }
+    if (isTerritory() && I.pressed('territory')) { sfx('ui_click'); Game.setScene('territory'); return; }
     if (I.pressed('map')) { ui.mapBig = !ui.mapBig; sfx('ui_click'); }
     if (I.pressed('guide')) { setSetting('keyGuide', !Game.settings.keyGuide); sfx('ui_click'); }
     if (I.pressed('science')) { setSetting('science', !Game.settings.science); sfx('ui_click'); }
@@ -874,6 +952,7 @@
       const nec = w.nearestResource(p.x, p.y, 'nectar', pr + 18);
       if (nec && p.hunger < 98) return { key: 'E', text: 'Sip nectar' };
     }
+    if (isTerritory() && Game.territory.prompt) { const tp = Game.territory.prompt(); if (tp) return tp; }   // mark / repair / wrap / recycle
     if (w.shelterAt) {
       const inside = w.shelterAt(p.x, p.y);
       if (inside) return p.energy < 70 ? { key: 'R', text: 'Rest here', soft: true } : null;
@@ -909,12 +988,12 @@
 
   // ================================================================ CODEX
   const CODEX = { x: 40, y: 36, w: 1200, h: 648 };
-  const CODEX_TABS = ['Bestiary', 'Encyclopedia', 'Anatomy', 'Food Web', 'Spiders'];
+  const CODEX_TABS = ['Bestiary', 'Encyclopedia', 'Anatomy', 'Food Web', 'Spiders', 'Lineage'];
   const CONTENT = { x: 60, y: 100, w: 1160, h: 568 };
   const ROLE_ORDER = { prey: 0, neutral: 1, predator: 2, spider: 3 };
 
   function codexTabRects() {
-    const ws = [190, 212, 150, 150, 160], r = []; let x = CODEX.x + 22;
+    const ws = [170, 190, 120, 120, 140, 120], r = []; let x = CODEX.x + 22;
     for (let i = 0; i < CODEX_TABS.length; i++) { r.push({ x, y: CODEX.y + 14, w: ws[i], h: 38 }); x += ws[i] + 8; }
     return r;
   }
@@ -1014,7 +1093,8 @@
     else if (cx.tab === 1) updateEncy(nav);
     else if (cx.tab === 2) updateAnat(nav);
     else if (cx.tab === 3) updateWeb(nav);
-    else updateSpiders(nav);
+    else if (cx.tab === 4) updateSpiders(nav);
+    else updateLineage(nav);
   }
   // spiders: the roster of playable spiders (a list on the left, the selected one in detail on the right)
   const SPI = { x: 60, y: 132, w: 360, ch: 118, gap: 12, dx: 440, dy: 100, dw: 780, dh: 568 };
@@ -1086,13 +1166,16 @@
     const p = P();
     hudVignettes(ctx, p);
     if (p) { hudStats(ctx, p); hudHotbar(ctx, p); if (Game.settings.keyGuide) hudKeyGuide(ctx); }
-    hudObjectives(ctx);
+    const objBottom = hudObjectives(ctx);
+    if (isTerritory()) hudGoals(ctx, objBottom + 10);
     hudMinimap(ctx, p);
     hudClock(ctx);
+    if (isTerritory()) { hudCalendar(ctx); hudTerritoryChip(ctx, p); }
     const cardH = hudStageCard(ctx);
     const bossH = hudBossBar(ctx, cardH);
     hudBanner(ctx, cardH + bossH);
-    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudAlarms(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
+    if (p && sc === 'playing') { hudMateArrow(ctx, p); hudAlarms(ctx, p); if (isTerritory()) hudRival(ctx, p); hudPrompt(ctx, p); hudTip(ctx); }
+    hudWelcome(ctx);
     hudToasts(ctx);
     hudUnlockCard(ctx);
   }
@@ -1217,8 +1300,18 @@
       bar(ctx, x + 48, ry, w - 48 - 56, 12, f, col, { border: low ? 'rgba(255,90,70,' + (0.5 + 0.5 * pulse) + ')' : null });
       txt(ctx, String(m[4]) + (i === 4 ? '/' + Math.round(p.maxSilk || 0) : ''), x + w - 16, ry + 6.5, { size: 12, weight: 600, color: low ? '#ff9a8a' : COL.text2, align: 'right', base: 'middle' });
     }
-    // siblings: each one still with you is a revive (Brood mode only)
-    if (Game.state.mode !== 'survival') {
+    // Territory: the lineage's heirs (each one is a body that can take over)
+    if (isTerritory()) {
+      const L = Game.territory.lineage, heirs = L ? L.heirs | 0 : 0, sy = y + 202;
+      ctx.fillStyle = COL.lineSoft; ctx.fillRect(x + 16, sy - 9, w - 32, 1);
+      txt(ctx, 'Heirs', x + 16, sy + 8, { size: 12, weight: 600, color: COL.text3, base: 'middle' });
+      for (let i = 0; i < 5; i++) {
+        const sx = x + 66 + i * 24;
+        if (i < heirs) drawKind(ctx, 'kin', sx, sy + 8, 18);
+        else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy + 8, 5.5, 0, 7); ctx.stroke(); }
+      }
+      txt(ctx, heirs + (heirs === 1 ? ' heir' : ' heirs'), x + w - 16, sy + 8, { size: 12, weight: 600, color: heirs > 0 ? COL.amberHi : COL.bad, align: 'right', base: 'middle' });
+    } else if (Game.state.mode !== 'survival') {
       const cr = Game.creatures, left = (cr && cr.siblings) | 0, slots = (cr && cr.siblingsMax) || 5, sy = y + 202;
       ctx.fillStyle = COL.lineSoft; ctx.fillRect(x + 16, sy - 9, w - 32, 1);
       txt(ctx, 'Siblings', x + 16, sy + 8, { size: 12, weight: 600, color: COL.text3, base: 'middle' });
@@ -1235,6 +1328,9 @@
     if (p.resting) cx += chip(ctx, 'Resting', cx, cy, COL.good) + 6;
     else if (p.hidden) cx += chip(ctx, 'Hidden', cx, cy, COL.info) + 6;
     if (p.stateLabel === 'sprinting') cx += chip(ctx, 'Sprinting', cx, cy, COL.amber) + 6;
+    if (p.shaken > 0) cx += chip(ctx, 'Shaken ' + Math.ceil(p.shaken / C.DAY_LENGTH * 10) / 10 + ' d', cx, cy, COL.bad) + 6;
+    if (isTerritory() && Game.save && Game.save.readOnly) cx += chip(ctx, 'Read-only: slot open in another tab', cx, cy, COL.bad) + 6;
+    else if (isTerritory() && p.stage >= 4 && !p.mate.laid && Game.territory.matingNote && Game.territory.matingNote()) cx += chip(ctx, 'Not mating season yet', cx, cy, COL.amber) + 6;
   }
 
   function hudHotbar(ctx, p) {
@@ -1275,7 +1371,7 @@
   }
 
   function hudObjectives(ctx) {
-    const E = Game.edu; if (!E || !E.objectives || !E.objectives.length) return;
+    const E = Game.edu; if (!E || !E.objectives || !E.objectives.length) return 16;
     const x = W - 16 - 304, y = 16, w = 304, tw = w - 36 - 16, t = real();
     const items = E.objectives.slice(0, 3), laid = []; let cy = y + 38;
     for (let i = 0; i < items.length; i++) {
@@ -1307,6 +1403,7 @@
       const rw = o.reward && o.reward.growth;
       txt(ctx, done ? 'Complete' : (rw ? '+' + rw + ' growth' : ''), x + w - 16, ry + 6.5, { size: 11, weight: 700, color: done ? COL.good : COL.amberDim, align: 'right' });
     }
+    return y + total;
   }
 
   function hudClock(ctx) {
@@ -1377,14 +1474,15 @@
       const inA = smooth(clamp(age / 0.4, 0, 1)), outA = clamp((q.dur - age) / 0.5, 0, 1);
       const x = 16 - (1 - inA) * (w + 20), yy = y - h;
       ctx.save(); ctx.globalAlpha = outA;
-      const accent = q.kind === 'fact' ? (CAT_COL[q.cat] || COL.amber) : COL.good;
+      const accent = q.kind === 'fact' ? (CAT_COL[q.cat] || COL.amber) : (q.kind === 'note' ? (q.accent || COL.info) : COL.good);
       panel(ctx, x, yy, w, h, { fill: COL.panelHi, accent, border: U.rgba(accent, 0.45) });
       ctx.beginPath(); ctx.arc(x + 34, yy + h / 2, 17, 0, 7); ctx.fillStyle = U.rgba(accent, 0.18); ctx.fill();
-      icon(ctx, q.kind === 'fact' ? 'book' : 'check', x + 34, yy + h / 2, 20, accent);
-      const head = q.kind === 'fact' ? 'NEW FACT  ·  ' + (CAT_NAME[q.cat] || '').toUpperCase() : 'OBJECTIVE COMPLETE';
+      icon(ctx, q.kind === 'fact' ? 'book' : (q.kind === 'note' ? (q.icon || 'check') : 'check'), x + 34, yy + h / 2, 20, accent);
+      const head = q.kind === 'fact' ? 'NEW FACT  ·  ' + (CAT_NAME[q.cat] || '').toUpperCase() : (q.kind === 'note' ? (q.head || '') : 'OBJECTIVE COMPLETE');
       txt(ctx, head, x + 62, yy + 20, { size: 10, weight: 700, color: accent });
-      txt(ctx, fit(ctx, q.kind === 'fact' ? q.title : (q.sub || ''), w - 78 - (q.reward ? 70 : 0), 15, 700), x + 62, yy + 40, { size: 15, weight: 700, color: COL.text });
+      txt(ctx, fit(ctx, (q.kind === 'fact' || q.kind === 'note') ? q.title : (q.sub || ''), w - 78 - (q.reward ? 70 : 0), 15, 700), x + 62, yy + 40, { size: 15, weight: 700, color: COL.text });
       if (q.kind === 'fact') txt(ctx, 'Press B to read it in the Codex', x + 62, yy + 55, { size: 11, color: COL.text3 });
+      else if (q.kind === 'note' && q.sub) txt(ctx, fit(ctx, q.sub, w - 78, 11, 400), x + 62, yy + 55, { size: 11, color: COL.text3 });
       else if (q.reward) txt(ctx, '+' + q.reward + ' growth', x + w - 14, yy + 40, { size: 13, weight: 700, color: COL.amberHi, align: 'right' });
       ctx.restore();
       y = yy - 8;
@@ -1482,6 +1580,16 @@
       ctx.fillStyle = 'rgba(150,230,200,0.9)';
       for (let i = 0; i < wd.shelters.length && i < 300; i++) { const s = wd.shelters[i]; if (explored(s.x, s.y)) { ctx.beginPath(); ctx.arc(mx(s.x), my(s.y), big ? 2.4 : 1.7, 0, 7); ctx.fill(); } }
     }
+    if (isTerritory()) {   // the Claim: a ring round the Home Site, heirloom webs as gold diamonds
+      const T = Game.territory, hm = T.home;
+      if (hm) {
+        ctx.save(); ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]); ctx.strokeStyle = 'rgba(255,208,126,0.75)'; ctx.beginPath(); ctx.arc(mx(hm.x), my(hm.y), T.claimRadius() / C.WORLD_W * w, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#ffd58a'; ctx.beginPath(); ctx.arc(mx(hm.x), my(hm.y), big ? 3.4 : 2.6, 0, 7); ctx.fill(); ctx.restore();
+      }
+      ctx.fillStyle = '#ffd58a';
+      T.heirloomWebs().forEach(wb => { const cx0 = wb.x != null ? wb.x : (wb.x1 + wb.x2) / 2, cy0 = wb.y != null ? wb.y : (wb.y1 + wb.y2) / 2, q = big ? 3 : 2.2; ctx.beginPath(); ctx.moveTo(mx(cx0), my(cy0) - q); ctx.lineTo(mx(cx0) + q, my(cy0)); ctx.lineTo(mx(cx0), my(cy0) + q); ctx.lineTo(mx(cx0) - q, my(cy0)); ctx.closePath(); ctx.fill(); });
+      const rv = T.rivalPos && T.rivalPos(); if (rv) { const pul = 0.5 + 0.5 * Math.sin(real() * 6); ctx.fillStyle = 'rgba(255,90,70,' + (0.6 + 0.4 * pul) + ')'; ctx.beginPath(); ctx.arc(mx(rv.x), my(rv.y), 2.6 + 1.6 * pul, 0, 7); ctx.fill(); }
+    }
     // camera window
     const v = Game.camera.view;
     ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,240,210,0.55)'; ctx.strokeRect(mx(v.x0) + 0.5, my(v.y0) + 0.5, (v.x1 - v.x0) / C.WORLD_W * w, (v.y1 - v.y0) / C.WORLD_H * h);
@@ -1525,6 +1633,10 @@
     else if (sc === 'codex') drawCodex(ctx);
     else if (sc === 'gameover') drawGameOver(ctx);
     else if (sc === 'victory') drawVictory(ctx);
+    else if (sc === 'territory') drawTerritoryScreen(ctx);
+    else if (sc === 'succession') drawSuccession(ctx);
+    else if (sc === 'lineageended') drawLineageEnded(ctx);
+    else if (sc === 'legacy') drawLegacy(ctx);
   }
 
   function dim(ctx, a, warm) {
@@ -1584,11 +1696,11 @@
     txt(ctx, 'From a speck in the leaf litter to the next generation', W / 2, 282, { size: 14, italic: true, font: SERIF, color: COL.text2, align: 'center', shadow: true });
     ctx.restore();
 
-    const rects = titleRects(), foc = ui.idx.title || 0;
+    const rects = titleRects(), items = titleItems(), foc = ui.idx.title || 0;
     ctx.save(); ctx.globalAlpha = a;
     for (let i = 0; i < rects.length; i++) {
-      const r = rects[i]; const sub = TITLE_ITEMS[i].id === 'bestiary' ? (safe(() => Game.edu.hasSeen && bestiaryIds().filter(isSeen).length + '/' + bestiaryIds().length, '') || '') : '';
-      drawButton(ctx, r, TITLE_ITEMS[i].label, i === foc, { size: 19, sub });
+      const r = rects[i], it = items[i]; const sub = it.id === 'bestiary' ? (safe(() => Game.edu.hasSeen && bestiaryIds().filter(isSeen).length + '/' + bestiaryIds().length, '') || '') : '';
+      if (it.id === 'continue') drawContinue(ctx, r, i === foc); else drawButton(ctx, r, it.label, i === foc, { size: rects.length > 5 ? 17 : 19, sub });
     }
     // footer
     let fx = W / 2 - 230;
@@ -1612,15 +1724,18 @@
     if (sub === 'species') return speciesLayout().b;
     if (sub === 'howto') return { x: (W - 900) / 2, y: 46, w: 900, h: 628 };
     if (sub === 'changelog') return { x: (W - 760) / 2, y: 46, w: 760, h: 628 };
+    if (sub === 'slots') return slotsLayout().b;
+    if (sub === 'name') return { x: (W - 760) / 2, y: 120, w: 760, h: 440 };
     return { x: (W - 680) / 2, y: 100, w: 680, h: 520 };
   }
   function drawSub(ctx) {
     const sub = ui.sub;
     dim(ctx, 0.5);
     if (sub === 'confirmQuit') return drawConfirmQuit(ctx);
+    if (sub === 'confirmOverwrite') return drawConfirmOverwrite(ctx);
     const b = subPanelBox(sub);
     panel(ctx, b.x, b.y, b.w, b.h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
-    const title = { settings: 'Settings', mode: 'Choose your journey', species: 'Choose your spider', howto: 'How to Play', credits: 'Credits', changelog: 'Changelog' }[sub];
+    const title = { settings: 'Settings', mode: 'Choose your journey', species: 'Choose your spider', howto: 'How to Play', credits: 'Credits', changelog: 'Changelog', slots: ui.slotMode === 'new' ? 'Choose a save slot' : 'Load Game', name: 'Name your lineage' }[sub];
     txt(ctx, title, W / 2, b.y + 48, { size: 30, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
     ctx.strokeStyle = 'rgba(255,205,130,0.35)'; ctx.beginPath(); ctx.moveTo(b.x + 60, b.y + 62); ctx.lineTo(b.x + b.w - 60, b.y + 62); ctx.stroke();
     if (sub === 'settings') drawSettings(ctx, b);
@@ -1628,8 +1743,11 @@
     else if (sub === 'species') drawSpecies(ctx, b);
     else if (sub === 'howto') drawHowTo(ctx, b);
     else if (sub === 'changelog') drawChangelog(ctx, b);
+    else if (sub === 'slots') drawSlots(ctx, b);
+    else if (sub === 'name') drawName(ctx, b);
     else drawCredits(ctx, b);
-    if (sub !== 'settings') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode' && sub !== 'species', { size: 17 });
+    if (sub !== 'settings' && sub !== 'slots' && sub !== 'name') drawButton(ctx, subBackRect(b.y, b.h), 'Back', sub !== 'mode' && sub !== 'species', { size: 17 });
+    drawMsg(ctx, b.y + b.h + 24);
   }
 
   // one card per spider: portrait, perks (or, for a locked one, how to unlock it)
@@ -1660,13 +1778,18 @@
   function drawMode(ctx, b) {
     const L = modeLayout(), foc = ui.idx.mode || 0;
     L.cards.forEach((r, i) => {
-      const m = C.MODES[i], f = i === foc, hard = m.id === 'survival', col = hard ? COL.bad : COL.amber;
+      const m = C.MODES[i], f = i === foc, hard = m.id === 'survival', col = hard ? COL.bad : (m.id === 'territory' ? COL.info : COL.amber);
       panel(ctx, r.x, r.y, r.w, r.h, { fill: f ? 'rgba(34,24,14,0.96)' : 'rgba(18,13,9,0.8)', border: f ? col : COL.line, bw: f ? 2 : 1, r: 14 });
       txt(ctx, m.name, r.x + 24, r.y + 46, { size: 30, font: SERIF, weight: 700, color: f ? COL.amberHi : COL.text });
       txt(ctx, m.tag.toUpperCase(), r.x + r.w - 24, r.y + 42, { size: 11, weight: 700, color: col, align: 'right' });
+      if (m.id === 'territory') {   // the four seasons: a year in the life of the place
+        ['spring', 'summer', 'autumn', 'winter'].forEach((sn, k) => { const sx = r.x + 40 + k * 44; ctx.beginPath(); ctx.arc(sx, r.y + 100, 17, 0, 7); ctx.fillStyle = U.rgba(SEASON_COL[sn], 0.16); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = U.rgba(SEASON_COL[sn], 0.6); ctx.stroke(); icon(ctx, SEASON_ICON[sn], sx, r.y + 100, 18, SEASON_COL[sn]); });
+        txt(ctx, '36-day year', r.x + r.w - 24, r.y + 101, { size: 13, weight: 700, color: COL.text3, align: 'right', base: 'middle' });
+      } else {
       // one life, plus a sibling icon per revive in Brood mode
       icon(ctx, 'heart', r.x + 38, r.y + 100, 26, COL.hp);
       if (!hard) { txt(ctx, '+', r.x + 66, r.y + 101, { size: 16, weight: 700, color: COL.text3, align: 'center', base: 'middle' }); for (let k = 0; k < 5; k++) drawKind(ctx, 'kin', r.x + 94 + k * 32, r.y + 100, 24); }
+      }
       para(ctx, m.blurb, r.x + 24, r.y + 134, r.w - 48, { size: 15, lh: 22, color: COL.text });
       txt(ctx, m.note, r.x + 24, r.y + r.h - 26, { size: 13, weight: 600, color: col });
     });
@@ -1760,7 +1883,7 @@
     const w = 560, h = 240, x = (W - w) / 2, y = 300 - 60;
     panel(ctx, x, y, w, h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.35)', r: 16 });
     txt(ctx, 'Quit to title?', W / 2, y + 56, { size: 28, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
-    para(ctx, 'Your current journey will be lost. Everything you have discovered in the Codex is kept.', x + 50, y + 74, w - 100, { size: 15, lh: 22, align: 'center', color: COL.text2 });
+    para(ctx, isTerritory() ? 'Progress since your last save will be lost. Use Save & Quit to keep this exact moment. The Codex is always kept.' : 'Your current journey will be lost. Everything you have discovered in the Codex is kept.', x + 50, y + 74, w - 100, { size: 15, lh: 22, align: 'center', color: COL.text2 });
     const rects = confirmRects(), foc = ui.idx.confirmQuit == null ? 1 : ui.idx.confirmQuit;
     drawButton(ctx, rects[0], 'Quit', foc === 0, { size: 17 }); drawButton(ctx, rects[1], 'Keep Playing', foc === 1, { size: 17 });
   }
@@ -1772,13 +1895,20 @@
     if (ui.sub) { drawSub(ctx); ctx.restore(); return; }
     txt(ctx, 'Paused', W / 2, 172, { size: 54, font: SERIF, weight: 700, color: COL.amberHi, align: 'center', shadow: true });
     const p = P(), E = Game.edu;
-    const info = Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + spiderLabel() + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
+    const info = isTerritory() ? Game.territory.lineageName + '  ·  ' + Game.territory.calendar().label + '  ·  ' + (p ? stageName(p.stage || 0) : '')
+      : Game.modeInfo(Game.state.mode).name + ' mode  ·  ' + spiderLabel() + (p ? stageName(p.stage || 0) + '  ·  ' : '') + 'Survived ' + fmtTime(Game.time.t);
     txt(ctx, info, W / 2, 208, { size: 15, color: COL.text2, align: 'center', font: SERIF, italic: true });
     ctx.strokeStyle = 'rgba(255,205,130,0.4)'; ctx.beginPath(); ctx.moveTo(W / 2 - 120, 226); ctx.lineTo(W / 2 + 120, 226); ctx.stroke();
-    const rects = pauseRects(), foc = ui.idx.pause || 0;
-    PAUSE_ITEMS.forEach((it, i) => drawButton(ctx, rects[i], it.label, i === foc, { size: 18 }));
-    let fx = W / 2 - 52; fx += keycap(ctx, 'Esc', fx, 590, { h: 22 }) + 8; txt(ctx, 'Resume', fx, 606, { size: 13, color: COL.text3 });
-    drawVersion(ctx, W / 2, 634, 'center');
+    const rects = pauseRects(), foc = ui.idx.pause || 0, items = pauseItems();
+    items.forEach((it, i) => drawButton(ctx, rects[i], it.label, i === foc, { size: items.length > 5 ? 16 : 18 }));
+    if (items.length > 5) {   // the long Territory menu leaves no room under the buttons: hints go in the corners
+      let fx = 24; fx += keycap(ctx, 'Esc', fx, H - 36, { h: 22 }) + 8; txt(ctx, 'Resume', fx, H - 20, { size: 13, color: COL.text3 });
+      drawVersion(ctx, W - 24, H - 20, 'right');
+    } else {
+      let fx = W / 2 - 52; fx += keycap(ctx, 'Esc', fx, 590, { h: 22 }) + 8; txt(ctx, 'Resume', fx, 606, { size: 13, color: COL.text3 });
+      drawVersion(ctx, W / 2, 634, 'center');
+    }
+    drawMsg(ctx, items.length > 5 ? 242 - 26 : 560);
     ctx.restore();
   }
 
@@ -1858,7 +1988,7 @@
     panel(ctx, CODEX.x, CODEX.y, CODEX.w, CODEX.h, { fill: 'rgba(14,10,7,0.94)', border: 'rgba(255,205,130,0.3)', r: 18 });
     const E = Game.edu, ec = E ? E.counts() : { unlocked: 0, total: 0 };
     const ids = bestiaryIds(), seenN = ids.filter(isSeen).length;
-    const labels = ['Bestiary  ' + seenN + '/' + ids.length, 'Encyclopedia  ' + ec.unlocked + '/' + ec.total, 'Anatomy', 'Food Web', 'Spiders  ' + Game.unlocks.list().length + '/' + C.SPECIES.length];
+    const labels = ['Bestiary  ' + seenN + '/' + ids.length, 'Encyclopedia  ' + ec.unlocked + '/' + ec.total, 'Anatomy', 'Food Web', 'Spiders  ' + Game.unlocks.list().length + '/' + C.SPECIES.length, 'Lineage'];
     const tr = codexTabRects(), mouse = Game.input.mouse;
     for (let i = 0; i < tr.length; i++) {
       const r = tr[i], act = i === cx.tab, hov = inRect(mouse.x, mouse.y, r);
@@ -1873,7 +2003,7 @@
     txt(ctx, 'Tabs', hx - 4, CODEX.y + 38, { size: 12, color: COL.text3, align: 'right' }); hx -= measure(ctx, 'Tabs', 12) + 12;
     hx -= keycap(ctx, 'E', hx - 22, CODEX.y + 26, { h: 22 }) + 3; hx -= keycap(ctx, 'Q', hx - 22, CODEX.y + 26, { h: 22 }) + 3;
     ctx.fillStyle = COL.line; ctx.fillRect(CODEX.x + 20, CODEX.y + 62, CODEX.w - 40, 1);
-    switch (cx.tab) { case 0: drawBestiary(ctx); break; case 1: drawEncy(ctx); break; case 2: drawAnatomy(ctx); break; case 3: drawFoodWeb(ctx); break; default: drawSpiders(ctx); }
+    switch (cx.tab) { case 0: drawBestiary(ctx); break; case 1: drawEncy(ctx); break; case 2: drawAnatomy(ctx); break; case 3: drawFoodWeb(ctx); break; case 4: drawSpiders(ctx); break; default: drawLineage(ctx); }
     ctx.restore();
   }
 
@@ -2385,6 +2515,7 @@
 
   // ========================================================= SCIENCE OVERLAY
   function drawOverlayLayer(ctx) {
+    drawFade(ctx);
     if (Game.state.scene !== 'playing' || !Game.settings.science) return;
     const p = P(), t = real();
     // tag
@@ -2436,6 +2567,593 @@
     txt(ctx, 'Drain/s  hunger -' + (st.hungerRate * dm).toFixed(2) + '  thirst -' + (st.thirstRate * dm).toFixed(2), x + 16, ly + 8, { size: 11, color: COL.text2 });
     txt(ctx, 'Zone: ' + (z ? z.name : '-'), x + 16, ly + 24, { size: 11, color: COL.text2 });
   }
+
+  // ============================================================================================================
+  // TERRITORY UI  (territory-mode-gdd.md section 8): save slots and Continue, the name field, the calendar and
+  // territory chips, and the screens: Territory (T), Succession, Lineage Ended, Legacy, Welcome back, Lineage tab.
+  // ============================================================================================================
+  const SEASON_COL = { spring: '#8fd35f', summer: '#ffd36a', autumn: '#e8924a', winter: '#a8d4f0' };
+  const SEASON_ICON = { spring: 'leaf', summer: 'sun', autumn: 'leaf', winter: 'star' };
+  const fmtDur = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? h + 'h ' + m + 'm' : (m ? m + ' min' : s + ' s'); };
+  const fmtAgo = (at) => { const d = Math.max(0, (Date.now() - at) / 1000); if (d < 60) return 'just now'; if (d < 3600) return Math.floor(d / 60) + ' min ago'; if (d < 86400) return Math.floor(d / 3600) + ' h ago'; return Math.floor(d / 86400) + ' d ago'; };
+  const cap1 = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  const webName = (type) => (C.WEB_TYPES[type] && C.WEB_TYPES[type].name) || titleize(type);
+  const wcenter = (w) => w.x != null ? { x: w.x, y: w.y } : { x: (w.x1 + w.x2) / 2, y: (w.y1 + w.y2) / 2 };
+
+  // a short message (saved, exported, a load that failed) shown on the title, in sub panels and on the pause screen
+  function flashMsg(text, bad) { ui.msg = { text, bad: !!bad, t0: real() }; }
+  function drawMsg(ctx, y) {
+    const m = ui.msg; if (!m) return;
+    const age = real() - m.t0; if (age > 6) { ui.msg = null; return; }
+    const a = clamp(Math.min(age / 0.25, (6 - age) / 0.6), 0, 1), w = Math.min(W - 80, measure(ctx, m.text, 14, 600) + 48);
+    ctx.save(); ctx.globalAlpha = a;
+    panel(ctx, (W - w) / 2, y - 18, w, 36, { fill: 'rgba(14,10,7,0.92)', r: 18, border: m.bad ? 'rgba(229,96,77,0.6)' : 'rgba(155,214,92,0.5)' });
+    txt(ctx, m.text, W / 2, y + 1, { size: 14, weight: 600, color: m.bad ? '#ffb0a0' : COL.good, align: 'center', base: 'middle' });
+    ctx.restore();
+  }
+  function doSave(quit) {
+    const S = Game.save, slot = Game.state.slot;
+    if (!S || !S.canWrite()) { flashMsg(S && S.readOnly ? S.message('read-only') : 'Saving is not available right now.', true); return; }
+    if (!S.write(slot, quit ? 'suspend' : 'manual')) { flashMsg("Couldn't save" + (S.lastError ? ': ' + S.message(S.lastError) : '.'), true); return; }
+    if (quit) { Game.toTitle(); flashMsg('Saved. Continue picks up exactly where you left off.'); return; }
+    flashMsg('Saved to slot ' + slot + '.');
+  }
+  function doExport() {
+    const S = Game.save, slot = Game.state.slot;
+    if (S.canWrite()) S.write(slot, 'manual');
+    const exp = S.exportSlot(slot, 'manual') || S.exportSlot(slot);
+    if (!exp) { flashMsg('There is nothing to export yet.', true); return; }
+    flashMsg(S.download(exp) ? 'Exported ' + exp.filename : 'Export is only available in the browser.', !(root.Blob));
+  }
+
+  // ---- title: the Continue card
+  function drawContinue(ctx, r, focus) {
+    const c = Game.save.latest();
+    drawButton(ctx, r, '', focus);
+    if (!c) return;
+    const m = c.meta || {};
+    txt(ctx, 'Continue', r.x + r.w / 2, r.y + 22, { size: 18, weight: focus ? 700 : 600, color: focus ? COL.amberHi : COL.text, align: 'center', base: 'middle' });
+    const line = fit(ctx, (c.name || 'Lineage') + '  ·  ' + cap1(m.season || '') + ', day ' + (m.day || 1) + '  ·  ' + (c.hasSuspend ? 'suspended' : fmtAgo(c.savedAt)), r.w - 28, 12, 600);
+    txt(ctx, line, r.x + r.w / 2, r.y + 44, { size: 12, color: focus ? COL.amberDim : COL.text3, align: 'center', weight: 600, base: 'middle' });
+  }
+
+  // ---- save slots (New Territory game: pick where; Load Game: load, export or delete)
+  function slotsLayout() {
+    const b = { x: (W - 1020) / 2, y: 56, w: 1020, h: 608 }, rows = [];
+    for (let i = 0; i < 3; i++) rows.push({ x: b.x + 34, y: b.y + 80 + i * 138, w: b.w - 68, h: 126 });
+    return { b, rows, imp: { x: b.x + 34, y: b.y + b.h - 62, w: 240, h: 44 }, back: { x: b.x + b.w - 34 - 220, y: b.y + b.h - 62, w: 220, h: 44 } };
+  }
+  const slotActs = (card) => ui.slotMode === 'new' ? ['start'] : (card && !card.empty ? ['load', 'export', 'delete'] : []);
+  function slotBtn(row, k, n) { const w = n === 1 ? 160 : 108, gap = 8; return { x: row.x + row.w - 16 - (n - k) * w - (n - k - 1) * gap, y: row.y + row.h / 2 - 20, w, h: 40 }; }
+  function openSlots(mode) {
+    ui.slotMode = mode; ui.sub = 'slots'; ui.slotAct = 0; ui.delArm = null;
+    const cards = Game.save.slots(); let f = 0;
+    if (mode === 'load') { const l = Game.save.latest(); f = l ? l.slot - 1 : 0; } else { const e = cards.findIndex(c => c.empty); f = e >= 0 ? e : 0; }
+    ui.idx.slots = f;
+  }
+  function slotChoose(card, act) {
+    const S = Game.save;
+    if (ui.slotMode === 'new') {
+      ui.pendingSlot = card.slot;
+      if (card.empty) afterSlot(); else { ui.sub = 'confirmOverwrite'; ui.idx.confirmOverwrite = 1; }
+      return;
+    }
+    if (card.empty) { sfx('ui_back'); return; }
+    if (act === 'load') { if (!Game.loadGame(card.slot)) { flashMsg(S.message(S.lastError), true); sfx('ui_back'); } }
+    else if (act === 'export') { const exp = S.exportSlot(card.slot); flashMsg(exp ? (S.download(exp) ? 'Exported ' + exp.filename : 'Export is only available in the browser.') : 'Nothing to export.', !exp); }
+    else if (act === 'delete') {
+      if (ui.delArm && ui.delArm.slot === card.slot && real() - ui.delArm.t0 < 4) { S.delete(card.slot); ui.delArm = null; flashMsg('Slot ' + card.slot + ' deleted.'); if (!S.hasAny()) { ui.sub = null; } }
+      else { ui.delArm = { slot: card.slot, t0: real() }; flashMsg('Press Delete again within 4 seconds to erase slot ' + card.slot + '.', true); }
+    }
+  }
+  function pickFile(cb) {
+    try { const inp = root.document.createElement('input'); inp.type = 'file'; inp.accept = '.aosave,application/json'; inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) cb(f); }; inp.click(); }
+    catch (e) { flashMsg('Importing needs a browser file picker.', true); }
+  }
+  function doImport() {
+    const S = Game.save, free = S.firstFree();
+    if (!free) { flashMsg('All three slots are in use. Delete one first.', true); return; }
+    pickFile((f) => S.importSlot(f, free).then((res) => { flashMsg(res.ok ? 'Imported into slot ' + free + '.' : res.message, !res.ok); if (res.ok && ui.slotMode === 'load') ui.idx.slots = free - 1; }));
+  }
+  function updateSlots(nav) {
+    const L = slotsLayout(), cards = Game.save.slots(), key = 'slots';
+    if (nav.back || nav.pause) { sfx('ui_back'); ui.sub = ui.slotMode === 'new' ? 'mode' : null; return; }
+    if (ui.idx[key] == null) ui.idx[key] = 0;
+    let i = ui.idx[key]; const oi = i;
+    if (nav.up) i = setIdx(key, i - 1, 5);
+    if (nav.down) i = setIdx(key, i + 1, 5);
+    if (i !== oi) { ui.slotAct = 0; ui.delArm = null; }
+    const acts = i < 3 ? slotActs(cards[i]) : [];
+    if (i < 3 && acts.length > 1) { if (nav.left) ui.slotAct = Math.max(0, ui.slotAct - 1); if (nav.right) ui.slotAct = Math.min(acts.length - 1, ui.slotAct + 1); }
+    else if (i >= 3) { if (nav.left && i === 4) i = setIdx(key, 3, 5); if (nav.right && i === 3) i = setIdx(key, 4, 5); }
+    ui.slotAct = Math.min(ui.slotAct, Math.max(0, acts.length - 1));
+    if (nav.moved) {
+      for (let r = 0; r < 3; r++) if (inRect(nav.mx, nav.my, L.rows[r])) {
+        if (r !== i) { i = setIdx(key, r, 5); ui.slotAct = 0; }
+        const a2 = slotActs(cards[r]); a2.forEach((a, k) => { if (inRect(nav.mx, nav.my, slotBtn(L.rows[r], k, a2.length))) ui.slotAct = k; });
+      }
+      if (inRect(nav.mx, nav.my, L.imp) && i !== 3) i = setIdx(key, 3, 5);
+      if (inRect(nav.mx, nav.my, L.back) && i !== 4) i = setIdx(key, 4, 5);
+    }
+    if (nav.click) {
+      for (let r = 0; r < 3; r++) if (inRect(nav.mx, nav.my, L.rows[r])) {
+        const a2 = slotActs(cards[r]); let hit = -1; a2.forEach((a, k) => { if (inRect(nav.mx, nav.my, slotBtn(L.rows[r], k, a2.length))) hit = k; });
+        ui.idx[key] = r; sfx('ui_click'); slotChoose(cards[r], a2[hit >= 0 ? hit : 0]); return;
+      }
+      if (inRect(nav.mx, nav.my, L.imp)) { sfx('ui_click'); doImport(); return; }
+      if (inRect(nav.mx, nav.my, L.back)) { sfx('ui_back'); ui.sub = ui.slotMode === 'new' ? 'mode' : null; return; }
+    }
+    if (nav.confirm) {
+      sfx('ui_click');
+      if (i < 3) slotChoose(cards[i], acts[ui.slotAct] || acts[0]); else if (i === 3) doImport(); else { ui.sub = ui.slotMode === 'new' ? 'mode' : null; }
+    }
+  }
+  function drawSlotCard(ctx, r, card, focus, actIdx) {
+    const m = card.meta, t = real(), sp = m ? Game.speciesInfo(m.species) : null;
+    panel(ctx, r.x, r.y, r.w, r.h, { fill: focus ? 'rgba(34,24,14,0.96)' : 'rgba(18,13,9,0.8)', border: focus ? COL.amber : COL.line, bw: focus ? 2 : 1, r: 14 });
+    ctx.beginPath(); ctx.arc(r.x + 38, r.y + r.h / 2, 20, 0, 7); ctx.fillStyle = card.empty ? 'rgba(255,255,255,0.05)' : 'rgba(242,180,90,0.16)'; ctx.fill();
+    txt(ctx, String(card.slot), r.x + 38, r.y + r.h / 2 + 1, { size: 22, font: SERIF, weight: 700, color: card.empty ? COL.text3 : COL.amberHi, align: 'center', base: 'middle' });
+    if (card.empty) {
+      txt(ctx, 'Empty slot', r.x + 82, r.y + 52, { size: 22, font: SERIF, weight: 700, color: COL.text3 });
+      txt(ctx, ui.slotMode === 'new' ? 'Start a new lineage here' : 'Nothing saved yet', r.x + 82, r.y + 78, { size: 14, color: COL.text3 });
+      if (card.hall.length) txt(ctx, 'Hall of Lines: ' + card.hall.length + (card.hall.length === 1 ? ' line' : ' lines') + ' (last: ' + card.hall[0].name + ', ' + card.hall[0].generations + ' generations)', r.x + 82, r.y + 102, { size: 12, color: COL.amberDim });
+    } else {
+      const px = r.x + 112, py = r.y + r.h / 2;
+      ctx.save(); ctx.beginPath(); ctx.arc(px, py, 38, 0, 7); const bg = ctx.createRadialGradient(px, py - 8, 4, px, py, 40); bg.addColorStop(0, 'rgba(255,228,180,0.2)'); bg.addColorStop(1, 'rgba(0,0,0,0.38)'); ctx.fillStyle = bg; ctx.fill(); ctx.clip();
+      safe(() => P().drawPortrait(ctx, m.species, px, py, 76, { stage: Math.max(1, m.stage || 0), t })); ctx.restore();
+      const x0 = r.x + 168, tw = r.w - 168 - (ui.slotMode === 'new' ? 190 : 370);
+      txt(ctx, fit(ctx, card.name || 'Lineage', tw, 24, 700, SERIF), x0, r.y + 36, { size: 24, font: SERIF, weight: 700, color: focus ? COL.amberHi : COL.text });
+      const sc = SEASON_COL[m.season] || COL.amber; ctx.fillStyle = sc; ctx.beginPath(); ctx.arc(x0 + 6, r.y + 58, 5, 0, 7); ctx.fill();
+      txt(ctx, cap1(m.season) + ', day ' + m.day + ' of 36  ·  Year ' + m.year, x0 + 20, r.y + 63, { size: 14, weight: 600, color: COL.text });
+      txt(ctx, 'Generation ' + m.generation + '  ·  ' + (m.rankName || 'Claim') + ' (' + m.cp + ' CP)  ·  ' + m.heirs + (m.heirs === 1 ? ' heir' : ' heirs'), x0, r.y + 84, { size: 13, color: COL.text2 });
+      txt(ctx, 'Played ' + fmtDur(m.playSeconds) + '  ·  saved ' + fmtAgo(card.savedAt) + (sp && sp.id !== C.SPECIES[0].id ? '  ·  ' + sp.name : ''), x0, r.y + 104, { size: 12, color: COL.text3 });
+      let cx = x0 + tw - 4;
+      if (card.hasSuspend) { const cw = measure(ctx, 'SUSPENDED', 10, 700) + 18; chip(ctx, 'SUSPENDED', cx - cw, r.y + 14, COL.amber, { size: 10 }); cx -= cw + 6; }
+      if (Game.save.leaseHeldElsewhere && Game.save.leaseHeldElsewhere(card.slot)) { chip(ctx, 'OPEN IN ANOTHER TAB', cx - measure(ctx, 'OPEN IN ANOTHER TAB', 10, 700) - 18, r.y + 14, COL.bad, { size: 10 }); }
+    }
+    const acts = slotActs(card);
+    acts.forEach((a, k) => {
+      const br = slotBtn(r, k, acts.length), armed = a === 'delete' && ui.delArm && ui.delArm.slot === card.slot && real() - ui.delArm.t0 < 4;
+      const label = ui.slotMode === 'new' ? (card.empty ? 'Start here' : 'Overwrite') : (a === 'load' ? 'Load' : (a === 'export' ? 'Export' : (armed ? 'Sure?' : 'Delete')));
+      drawButton(ctx, br, label, focus && k === actIdx, { size: 15 });
+    });
+    if (ui.slotMode === 'new' && !acts.length) { /* nothing */ }
+  }
+  function drawSlots(ctx, b) {
+    const L = slotsLayout(), cards = Game.save.slots(), foc = ui.idx.slots || 0;
+    cards.forEach((c, i) => drawSlotCard(ctx, L.rows[i], c, foc === i, ui.slotAct || 0));
+    drawButton(ctx, L.imp, 'Import a save file', foc === 3, { size: 15 });
+    drawButton(ctx, L.back, 'Back', foc === 4, { size: 17 });
+    txt(ctx, ui.slotMode === 'new' ? 'Up / Down choose a slot  ·  Enter to start  ·  Esc back' : 'Up / Down choose a slot  ·  Left / Right choose an action  ·  Enter to confirm', W / 2, L.imp.y - 12, { size: 12, color: COL.text3, align: 'center' });
+    const st = Game.save.status(); if (!st.ready) txt(ctx, 'Loading saves…', W / 2, b.y + 64, { size: 13, color: COL.text3, align: 'center' });
+  }
+  function drawConfirmOverwrite(ctx) {
+    const w = 600, h = 250, x = (W - w) / 2, y = 230, c = Game.save.slots()[(ui.pendingSlot || 1) - 1];
+    panel(ctx, x, y, w, h, { fill: COL.panelHi, border: 'rgba(229,96,77,0.5)', r: 16 });
+    txt(ctx, 'Replace this lineage?', W / 2, y + 54, { size: 28, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center' });
+    para(ctx, 'Slot ' + (ui.pendingSlot || 1) + ' holds "' + (c && c.name || 'a lineage') + '". Starting a new lineage here deletes it for good. The Codex and your unlocked spiders are not affected.', x + 50, y + 74, w - 100, { size: 15, lh: 22, align: 'center', color: COL.text2 });
+    const rects = confirmRects().map(r => ({ x: r.x, y: y + h - 70, w: r.w, h: r.h })), foc = ui.idx.confirmOverwrite == null ? 1 : ui.idx.confirmOverwrite;
+    drawButton(ctx, rects[0], 'Replace it', foc === 0, { size: 17 }); drawButton(ctx, rects[1], 'Keep it', foc === 1, { size: 17 });
+  }
+
+  // ---- naming the lineage: a text field (Backspace edits; only Esc goes back, Enter begins)
+  const nameRects = (b) => ({ field: { x: b.x + 60, y: b.y + 218, w: b.w - 120, h: 58 }, begin: { x: b.x + b.w - 60 - 240, y: b.y + b.h - 78, w: 240, h: 48 }, back: { x: b.x + 60, y: b.y + b.h - 78, w: 160, h: 48 } });
+  function updateName(nav) {
+    const I = Game.input, b = subPanelBox('name'), R = nameRects(b);
+    const back = () => { sfx('ui_back'); ui.sub = Game.unlocks.list().length >= 2 ? 'species' : 'slots'; };
+    if (I.keyPressed('Escape')) { back(); return; }
+    const typed = I.takeText();
+    for (const ch of typed) {
+      if (ch === '\b') ui.nameText = (ui.nameText || '').slice(0, -1);
+      else if (ch >= ' ' && (ui.nameText || '').length < 28) ui.nameText = (ui.nameText || '') + ch;
+    }
+    if (I.keyPressed('Enter') || I.keyPressed('NumpadEnter') || (nav.click && inRect(nav.mx, nav.my, R.begin))) { sfx('ui_click'); startTerritory(); return; }
+    if (nav.click && inRect(nav.mx, nav.my, R.back)) back();
+  }
+  function drawName(ctx, b) {
+    const R = nameRects(b), sp = Game.speciesInfo(ui.pendingSpecies || Game.pickSpecies()), t = real();
+    para(ctx, 'Every lineage has a name. It is shown on the save slot and in the Lineage tab. Leave it empty to use the default.', b.x + 60, b.y + 82, b.w - 120, { size: 15, lh: 22, color: COL.text2, align: 'center' });
+    const px = b.x + b.w / 2, py = b.y + 166;
+    ctx.save(); ctx.beginPath(); ctx.arc(px, py, 34, 0, 7); ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill(); ctx.clip(); safe(() => P().drawPortrait(ctx, sp.id, px, py, 70, { stage: 4, t })); ctx.restore();
+    const f = R.field; panel(ctx, f.x, f.y, f.w, f.h, { fill: 'rgba(8,6,4,0.8)', border: COL.amber, bw: 2, r: 10 });
+    const name = ui.nameText || '', shown = name || 'Line of the ' + sp.name;
+    txt(ctx, shown, f.x + 20, f.y + f.h / 2 + 1, { size: 24, font: SERIF, weight: 600, color: name ? COL.text : COL.text3, italic: !name, base: 'middle' });
+    if (Math.floor(t * 2) % 2 === 0) { const cx = f.x + 20 + (name ? measure(ctx, name, 24, 600, SERIF) : 0) + 2; ctx.fillStyle = COL.amberHi; ctx.fillRect(cx, f.y + 12, 2, f.h - 24); }
+    txt(ctx, (name.length) + ' / 28', f.x + f.w - 14, f.y + f.h + 18, { size: 11, color: COL.text3, align: 'right' });
+    drawButton(ctx, R.back, 'Back', false, { size: 16 }); drawButton(ctx, R.begin, 'Begin', true, { size: 18 });
+    txt(ctx, 'Type a name  ·  Enter to begin  ·  Esc to go back', b.x + b.w / 2, b.y + b.h - 92, { size: 12, color: COL.text3, align: 'center' });
+  }
+
+  // ---- HUD: calendar chip (left of the clock), territory chip (right of it), goals, rival, welcome back, fade
+  function hudCalendar(ctx) {
+    const T = Game.territory, cal = T.calendar(), S = T.SEASONS[cal.seasonIndex], x = Math.round(W / 2 - 112 - 8 - 214), y = 14, w = 214, h = 44, col = SEASON_COL[cal.season];
+    panel(ctx, x, y, w, h, { fill: COL.panelSoft, r: 22 });
+    ctx.beginPath(); ctx.arc(x + 26, y + h / 2, 15, 0, 7); ctx.fillStyle = U.rgba(col, 0.16); ctx.fill(); icon(ctx, SEASON_ICON[cal.season], x + 26, y + h / 2, 19, col);
+    txt(ctx, S.name + '  ·  Day ' + cal.day + ' of 36', x + 50, y + 19, { size: 13, weight: 700, color: COL.text });
+    const left = cal.daysLeftInSeason, nx = T.SEASONS[(cal.seasonIndex + 1) % 4].name.toLowerCase();
+    txt(ctx, 'Year ' + cal.year + '  ·  ' + (left > 0 ? left + (left === 1 ? ' day to ' : ' days to ') + nx : 'last day of ' + S.name.toLowerCase()), x + 50, y + 35, { size: 11, color: COL.text3, weight: 600 });
+  }
+  function hudTerritoryChip(ctx, p) {
+    const T = Game.territory; if (!p || !T.home) return;
+    const near = Math.hypot(p.x - T.home.x, p.y - T.home.y) <= T.claimRadius() + 100;
+    if (!T.inClaim(p.x, p.y) && !near) return;
+    const x = Math.round(W / 2 + 112 + 8), y = 14, w = 192, h = 44, nr = T.nextRank(), info = T.rankInfo();
+    panel(ctx, x, y, w, h, { fill: COL.panelSoft, r: 22, border: T.inClaim(p.x, p.y) ? 'rgba(255,205,130,0.45)' : COL.line });
+    txt(ctx, info.name, x + 18, y + 19, { size: 14, font: SERIF, weight: 700, color: T.inClaim(p.x, p.y) ? COL.amberHi : COL.text2 });
+    txt(ctx, T.inClaim(p.x, p.y) ? 'Pantry ' + T.pantry.length + '/' + T.pantryCapacity() : 'Near your Claim', x + w - 16, y + 19, { size: 11, weight: 600, color: COL.text3, align: 'right' });
+    bar(ctx, x + 18, y + 28, w - 36 - 62, 8, nr.f, COL.amber, { light: COL.amberHi });
+    txt(ctx, Math.floor(T.cp) + (nr.to ? '/' + nr.to : '') + ' CP', x + w - 18, y + 33, { size: 10, weight: 700, color: COL.text2, align: 'right', base: 'middle' });
+  }
+  function hudGoals(ctx, y0) {
+    const E = Game.edu, list = (E && E.goals) || []; if (!list.length) return;
+    const x = W - 16 - 304, w = 304, tw = w - 52; let hh = 34; const hs = list.map(g => { const th = paraH(ctx, g.text, tw, { size: 13, lh: 17, maxLines: 2 }); hh += th + 28; return th; });
+    panel(ctx, x, y0, w, hh, { fill: COL.panelSoft });
+    spaced(ctx, 'TERRITORY GOALS', x + 18, y0 + 24, 2, { size: 11, weight: 700, color: COL.info, align: 'left' });
+    let cy = y0 + 36;
+    list.forEach((g, i) => {
+      const th = hs[i];
+      ctx.beginPath(); ctx.arc(x + 26, cy + 8, 7, 0, 7); if (g.done) { ctx.fillStyle = COL.good; ctx.fill(); icon(ctx, 'check', x + 26, cy + 8.5, 10, '#173008'); } else { ctx.lineWidth = 1.6; ctx.strokeStyle = COL.info; ctx.stroke(); }
+      para(ctx, g.text, x + 44, cy, tw, { size: 13, lh: 17, color: g.done ? '#b4d99a' : COL.text, maxLines: 2 });
+      const ry = cy + th + 5;
+      if (g.goal > 1 && !g.done) { bar(ctx, x + 44, ry, w - 44 - 16 - 92, 5, g.progress / g.goal, COL.info, { border: 'rgba(255,255,255,0.08)' }); txt(ctx, Math.floor(g.progress) + '/' + g.goal, x + 44 + w - 44 - 16 - 92 + 8, ry + 6, { size: 10, weight: 600, color: COL.text2 }); }
+      txt(ctx, g.done ? 'Complete' : '+' + g.reward.cp + ' CP', x + w - 16, ry + 6, { size: 10.5, weight: 700, color: g.done ? COL.good : COL.info, align: 'right' });
+      cy += th + 28;
+    });
+  }
+  // an arrow at the screen edge toward the rival, and the ring that fills while you hold X to recycle a web
+  function hudRival(ctx, p) {
+    const T = Game.territory, rv = T.rivalPos && T.rivalPos();
+    if (rv && !rv.leaving) {
+      const cam = Game.camera, sp = cam.worldToScreen(rv.x, rv.y), pad = 46, t = real();
+      if (!(sp.x > pad && sp.x < W - pad && sp.y > pad && sp.y < H - pad)) {
+        const dx = sp.x - W / 2, dy = sp.y - H / 2, ang = Math.atan2(dy, dx), sc = Math.min((W / 2 - pad) / Math.max(1e-3, Math.abs(dx)), (H / 2 - pad) / Math.max(1e-3, Math.abs(dy))), ax = W / 2 + dx * sc, ay = H / 2 + dy * sc, col = '#ff8a3a';
+        ctx.save(); ctx.globalAlpha = 0.75 + 0.25 * Math.sin(t * 7); ctx.translate(ax, ay);
+        ctx.fillStyle = 'rgba(20,10,5,0.55)'; ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill();
+        ctx.rotate(ang); ctx.shadowColor = col; ctx.shadowBlur = 12; ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(-6, -10); ctx.lineTo(-2, 0); ctx.lineTo(-6, 10); ctx.closePath(); ctx.fill(); ctx.restore();
+        const K = KINDS(), kd = K && K[rv.kind]; txt(ctx, 'Rival: ' + (kd ? kd.name : 'spider'), clamp(ax, 90, W - 90), ay + (ay < H / 2 ? 32 : -26), { size: 11, weight: 700, color: col, align: 'center', shadow: true });
+      }
+    }
+    const rp = T.recycleProgress ? T.recycleProgress() : 0;
+    if (rp > 0.02) {
+      const sp = Game.camera.worldToScreen(p.x, p.y), cz = Game.camera.zoom || 1, r = (p.radius || 8) * cz + 22;
+      ctx.save(); ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.stroke();
+      ctx.strokeStyle = COL.amberHi; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, -Math.PI / 2, -Math.PI / 2 + rp * Math.PI * 2); ctx.stroke(); ctx.restore();
+      txt(ctx, 'Recycling silk…', sp.x, sp.y - r - 8, { size: 12, weight: 700, color: COL.amberHi, align: 'center', shadow: true });
+    }
+  }
+  // "Welcome back" after loading: where the lineage stands and anything that went wrong with the file
+  function hudWelcome(ctx) {
+    const wc = ui.welcome; if (!wc || !isTerritory()) return;
+    const age = real() - wc.t0; if (age < 0) return; if (age > wc.dur) { ui.welcome = null; return; }
+    const T = Game.territory, cal = T.calendar(), S = T.SEASONS[cal.seasonIndex], g = T.currentGeneration(), last = Game.save.lastLoad || {};
+    const lines = [];
+    lines.push([cal.label + '  ·  ' + S.name + ': ' + S.blurb, COL.text]);
+    lines.push(['Generation ' + (g ? g.n : 1) + '  ·  ' + T.rankInfo().name + '  ·  ' + T.lineage.heirs + (T.lineage.heirs === 1 ? ' heir' : ' heirs') + ' in the line', COL.text2]);
+    const hw = T.heirloomWebs(), weak = hw.reduce((m, w) => Math.min(m, w.integrity), 1);
+    lines.push([hw.length ? hw.length + ' heirloom ' + (hw.length === 1 ? 'web' : 'webs') + ' (weakest ' + Math.round(weak * 100) + '%)  ·  pantry ' + T.pantry.length + '/' + T.pantryCapacity() : 'No heirloom webs yet: stand in a web inside your Claim and press E', COL.text2]);
+    lines.push(['While you were away the creatures wandered back in: prey and hunters are roaming for the season ahead.', COL.text3]);
+    if (wc.warning === 'backup') lines.push(['The latest save was damaged, so the previous backup was restored.', '#ffb0a0']);
+    else if (wc.warning === 'older') lines.push(['That snapshot was damaged, so an older checkpoint was loaded.', '#ffb0a0']);
+    if (wc.readOnly) lines.push(['Read-only: this slot is open in another tab, so nothing will be saved here.', '#ffb0a0']);
+    const w = 640, tw = w - 56; let h = 78; const hs = lines.map(l => { const th = paraH(ctx, l[0], tw, { size: 13.5, lh: 18 }); h += th + 6; return th; });
+    const x = (W - w) / 2, y = 122, a = clamp(Math.min(age / 0.5, (wc.dur - age) / 1.0), 0, 1), e = smooth(a);
+    ctx.save(); ctx.globalAlpha = e; ctx.translate(0, (1 - e) * -14);
+    panel(ctx, x, y, w, h, { fill: COL.panelHi, border: 'rgba(255,205,130,0.4)', accent: SEASON_COL[cal.season] });
+    spaced(ctx, 'WELCOME BACK' + (last.kind === 'suspend' ? '  ·  EXACTLY WHERE YOU LEFT OFF' : ''), x + 26, y + 28, 2, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+    txt(ctx, fit(ctx, T.lineageName, w - 52, 26, 700, SERIF), x + 26, y + 58, { size: 26, font: SERIF, weight: 700, color: COL.amberHi });
+    let cy = y + 72; lines.forEach((l, i) => { cy = para(ctx, l[0], x + 26, cy, tw, { size: 13.5, lh: 18, color: l[1] }) + 6; });
+    ctx.restore();
+  }
+  // a black fade (a new generation, an heir taking over)
+  function drawFade(ctx) {
+    const f = ui.fade; if (!f) return;
+    const age = real() - f.t0; if (age > f.dur) { ui.fade = null; return; }
+    ctx.save(); ctx.fillStyle = 'rgba(4,3,2,' + (1 - smooth(clamp(age / f.dur, 0, 1))).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); ctx.restore();
+  }
+
+  // ---- the Territory screen (T): rank and Claim Points, the Claim on a map, heirloom webs, the pantry, goals
+  const TS = { x: 40, y: 36, w: 1200, h: 648 };
+  function closeTerritoryScreen() { sfx('ui_back'); const prev = Game.state.prevScene; Game.setScene(prev === 'paused' ? 'paused' : 'playing'); }
+  function updateTerritoryScreen(nav) {
+    if (nav.back || nav.pause || Game.input.pressed('territory')) closeTerritoryScreen();
+  }
+  function drawTerritoryScreen(ctx) {
+    const T = Game.territory, a = fadeIn(0.25), t = real();
+    ctx.save(); ctx.globalAlpha = a; dim(ctx, 0.84);
+    panel(ctx, TS.x, TS.y, TS.w, TS.h, { fill: 'rgba(14,10,7,0.94)', border: 'rgba(255,205,130,0.3)', r: 18 });
+    txt(ctx, 'Territory', TS.x + 28, TS.y + 46, { size: 30, font: SERIF, weight: 700, color: COL.amberHi });
+    txt(ctx, T.lineageName + '  ·  ' + T.calendar().label, TS.x + 28 + measure(ctx, 'Territory', 30, 700, SERIF) + 18, TS.y + 44, { size: 14, italic: true, font: SERIF, color: COL.text2 });
+    let hx = TS.x + TS.w - 24; txt(ctx, 'Close', hx, TS.y + 40, { size: 12, color: COL.text3, align: 'right' }); hx -= measure(ctx, 'Close', 12) + 10; keycap(ctx, 'T', hx - 22, TS.y + 28, { h: 22 });
+    ctx.fillStyle = COL.line; ctx.fillRect(TS.x + 20, TS.y + 62, TS.w - 40, 1);
+    // ---- rank card
+    const rx = 60, ry = 112, rw = 584, rh = 178, info = T.rankInfo(), nr = T.nextRank();
+    panel(ctx, rx, ry, rw, rh, { fill: 'rgba(24,17,11,0.92)', r: 14 });
+    spaced(ctx, 'TERRITORY RANK ' + T.rank + ' OF ' + T.RANKS.length, rx + 22, ry + 28, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    txt(ctx, info.name, rx + 22, ry + 66, { size: 38, font: SERIF, weight: 700, color: COL.amberHi });
+    bar(ctx, rx + 22, ry + 80, rw - 44, 12, nr.f, COL.amber, { light: COL.amberHi });
+    txt(ctx, Math.floor(T.cp) + ' Claim Points' + (nr.to ? '  ·  ' + (nr.to - Math.floor(T.cp)) + ' to ' + nr.next.name : '  ·  the highest rank'), rx + 22, ry + 112, { size: 13, weight: 600, color: COL.text2 });
+    const facts = [['Claim', info.radius + ' px'], ['Heirloom webs', T.heirloomWebs().length + ' / ' + info.webs], ['Pantry', T.pantry.length + ' / ' + info.pantry], ['Inherited traits', String(info.traits)], ['Bonus heirs', '+' + info.heirs]];
+    facts.forEach((f, i) => { const fx = rx + 22 + i * 110; txt(ctx, f[1], fx, ry + 142, { size: 16, weight: 700, color: COL.text }); txt(ctx, f[0].toUpperCase(), fx, ry + 160, { size: 9, weight: 700, color: COL.text3 }); });
+    // ---- the Claim on a map
+    const mx = 60, my = 306, mw = 584, mh = Math.round(mw * C.WORLD_H / C.WORLD_W);
+    ctx.save(); ctx.beginPath(); rr(ctx, mx, my, mw, mh, 10); ctx.clip();
+    if (Game.world && Game.world.drawMinimapTerrain) safe(() => Game.world.drawMinimapTerrain(ctx, mx, my, mw, mh));
+    ctx.fillStyle = 'rgba(8,6,4,0.35)'; ctx.fillRect(mx, my, mw, mh);
+    const X = (wx) => mx + wx / C.WORLD_W * mw, Y = (wy) => my + wy / C.WORLD_H * mh;
+    ctx.fillStyle = 'rgba(255,225,170,0.18)'; C.ZONES.forEach((z, i) => { if (i) ctx.fillRect(X(z.x0), my, 1, mh); });
+    if (T.home) {
+      const rr0 = T.claimRadius() / C.WORLD_W * mw;
+      const g = ctx.createRadialGradient(X(T.home.x), Y(T.home.y), 2, X(T.home.x), Y(T.home.y), rr0); g.addColorStop(0, 'rgba(255,208,126,0.28)'); g.addColorStop(1, 'rgba(255,208,126,0.07)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X(T.home.x), Y(T.home.y), rr0, 0, 7); ctx.fill();
+      ctx.lineWidth = 1.6; ctx.setLineDash([6, 4]); ctx.strokeStyle = 'rgba(255,208,126,0.9)'; ctx.stroke(); ctx.setLineDash([]);
+    }
+    (Game.webs.list || []).forEach(w => { if (w.dying) return; const c = wcenter(w); ctx.fillStyle = w.heirloom ? '#ffd58a' : 'rgba(235,240,255,0.5)'; ctx.beginPath(); if (w.heirloom) { const q = 4.2; ctx.moveTo(X(c.x), Y(c.y) - q); ctx.lineTo(X(c.x) + q, Y(c.y)); ctx.lineTo(X(c.x), Y(c.y) + q); ctx.lineTo(X(c.x) - q, Y(c.y)); ctx.closePath(); } else ctx.arc(X(c.x), Y(c.y), 1.7, 0, 7); ctx.fill(); });
+    if (T.home) { ctx.fillStyle = '#fff4d6'; ctx.strokeStyle = '#6b4a1f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(T.home.x), Y(T.home.y), 5, 0, 7); ctx.fill(); ctx.stroke(); }
+    const rv = T.rivalPos && T.rivalPos(); if (rv) { ctx.fillStyle = '#ff5a46'; ctx.beginPath(); ctx.arc(X(rv.x), Y(rv.y), 4, 0, 7); ctx.fill(); }
+    const p = P(); if (p) { const pul = 0.5 + 0.5 * Math.sin(t * 4); ctx.fillStyle = 'rgba(242,180,90,' + (0.3 + 0.2 * pul) + ')'; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 7 + 2 * pul, 0, 7); ctx.fill(); ctx.fillStyle = '#fff2d0'; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 3, 0, 7); ctx.fill(); }
+    ctx.restore();
+    ctx.lineWidth = 1; ctx.strokeStyle = COL.line; rr(ctx, mx + 0.5, my + 0.5, mw - 1, mh - 1, 10); ctx.stroke();
+    // legend
+    const ly = my + mh + 16; let lx = mx;
+    [['#fff4d6', 'Home Site'], ['#ffd58a', 'Heirloom web'], ['#f2b45a', 'You']].forEach(l => { ctx.fillStyle = l[0]; ctx.beginPath(); ctx.arc(lx + 5, ly - 4, 4, 0, 7); ctx.fill(); txt(ctx, l[1], lx + 14, ly, { size: 11, color: COL.text3 }); lx += measure(ctx, l[1], 11) + 36; });
+    // ---- heirloom webs
+    const hx0 = 668, hw = 552, webs = T.heirloomWebs().slice().sort((u, v) => u.integrity - v.integrity), slots = info.webs;
+    spaced(ctx, 'HEIRLOOM WEBS', hx0, 120, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    txt(ctx, webs.length + ' of ' + slots + ' slots used', hx0 + hw, 120, { size: 12, weight: 600, color: webs.length >= slots ? COL.bad : COL.text2, align: 'right' });
+    const rowH = Math.min(24, Math.floor(250 / Math.max(slots, 1)));
+    for (let i = 0; i < slots; i++) {
+      const y = 132 + i * rowH, w = webs[i];
+      if (!w) { ctx.strokeStyle = 'rgba(255,205,130,0.14)'; ctx.setLineDash([3, 4]); ctx.strokeRect(hx0 + 0.5, y + 2.5, hw - 1, rowH - 5); ctx.setLineDash([]); continue; }
+      const c = wcenter(w), z = Game.world && Game.world.zoneAt ? Game.world.zoneAt(c.x, c.y) : null, col = w.integrity > 0.6 ? COL.good : (w.integrity > 0.3 ? COL.amber : COL.bad);
+      ctx.fillStyle = '#ffd58a'; ctx.beginPath(); ctx.moveTo(hx0 + 10, y + rowH / 2 - 5); ctx.lineTo(hx0 + 15, y + rowH / 2); ctx.lineTo(hx0 + 10, y + rowH / 2 + 5); ctx.lineTo(hx0 + 5, y + rowH / 2); ctx.closePath(); ctx.fill();
+      txt(ctx, webName(w.type), hx0 + 26, y + rowH / 2 + 1, { size: 13, weight: 600, color: COL.text, base: 'middle' });
+      txt(ctx, z ? z.name : '', hx0 + 150, y + rowH / 2 + 1, { size: 11, color: COL.text3, base: 'middle' });
+      bar(ctx, hx0 + 290, y + rowH / 2 - 4, 200, 8, w.integrity, col);
+      txt(ctx, Math.round(w.integrity * 100) + '%', hx0 + hw - 4, y + rowH / 2 + 1, { size: 12, weight: 700, color: col, align: 'right', base: 'middle' });
+    }
+    // ---- pantry
+    const py0 = 132 + slots * rowH + 22;
+    spaced(ctx, 'PANTRY', hx0, py0, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    txt(ctx, T.pantry.length + ' of ' + info.pantry + ' bundles', hx0 + hw, py0, { size: 12, weight: 600, color: T.pantry.length >= info.pantry ? COL.bad : COL.text2, align: 'right' });
+    const cols = 10, cw = 52, ch = 44, cap = info.pantry;
+    for (let i = 0; i < cap; i++) {
+      const cx = hx0 + (i % cols) * cw, cy = py0 + 10 + Math.floor(i / cols) * (ch + 4), it = T.pantry[i];
+      rr(ctx, cx, cy, cw - 4, ch, 7); ctx.fillStyle = it ? 'rgba(30,22,14,0.95)' : 'rgba(255,255,255,0.03)'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = it ? COL.line : 'rgba(255,205,130,0.1)'; rr(ctx, cx + 0.5, cy + 0.5, cw - 5, ch - 1, 7); ctx.stroke();
+      if (it) { drawKind(ctx, it.kind, cx + (cw - 4) / 2, cy + 19, 26); const fc = it.fresh > 0.6 ? COL.good : (it.fresh > 0.3 ? COL.amber : COL.bad); bar(ctx, cx + 6, cy + ch - 11, cw - 16, 5, it.fresh, fc); }
+    }
+    const rows = Math.ceil(cap / cols), gy = py0 + 10 + rows * (ch + 4) + 14;
+    const gy2 = para(ctx, 'Wrap trapped prey beside a retreat web inside your Claim (E). Rest in a retreat to eat from the pantry. Stores spoil faster in summer.', hx0, gy - 12, hw, { size: 11.5, lh: 15, italic: true, font: SERIF, color: COL.text3 });
+    // ---- goals
+    const E = Game.edu, goals = (E && E.goals) || [];
+    if (goals.length) {
+      spaced(ctx, 'GOALS', hx0, gy2 + 22, 2, { size: 10.5, weight: 700, color: COL.info, align: 'left' });
+      goals.forEach((g, i) => { const yy = gy2 + 40 + i * 22; ctx.beginPath(); ctx.arc(hx0 + 6, yy - 4, 5, 0, 7); ctx.lineWidth = 1.5; ctx.strokeStyle = g.done ? COL.good : COL.info; ctx.stroke(); txt(ctx, fit(ctx, g.text, hw - 130, 12.5, 500), hx0 + 20, yy, { size: 12.5, color: g.done ? '#b4d99a' : COL.text }); txt(ctx, g.done ? 'Complete' : (g.goal > 1 ? Math.floor(g.progress) + '/' + g.goal + '  ' : '') + '+' + g.reward.cp + ' CP', hx0 + hw, yy, { size: 11, weight: 700, color: g.done ? COL.good : COL.info, align: 'right' }); });
+    }
+    ctx.restore();
+  }
+
+  // ---- Succession card: the spider fell, an heir takes over
+  function successionLayout() {
+    const g = mctx(), T = Game.territory, s = T.succession || { cause: 'eaten' }, D = (Game.edu && Game.edu.DEATH) || {}, d = D[s.cause] || D.default || { title: 'Your spider falls', flavor: '', science: '' };
+    const bw = 860, fh = paraH(g, d.flavor, bw - 140, { size: 16, lh: 23, italic: true, font: SERIF, maxLines: 3 }), sbh = 32 + paraH(g, d.science, bw - 132, { size: 14, lh: 20, maxLines: 4 }) + 18;
+    const flavorY = 168, boxY = flavorY + fh + 14, setY = boxY + sbh + 18, setH = 156, btnY = setY + setH + 20, ph = btnY + 52 + 28;
+    return { d, bw, fh, sbh, flavorY, boxY, setY, setH, btnY, ph, py: Math.max(10, Math.round((H - ph) / 2)) };
+  }
+  const successionBtn = (L) => ({ x: W / 2 - 150, y: L.py + L.btnY, w: 300, h: 52 });
+  function updateSuccession(nav) {
+    if (real() - ui.enterT < 1.0) return;
+    const L = successionLayout(), I = Game.input;
+    if (nav.confirm || I.keyPressed('Enter') || (nav.click && inRect(nav.mx, nav.my, successionBtn(L)))) { sfx('ui_click'); Game.territory.completeSuccession(); }
+  }
+  function drawSuccession(ctx) {
+    const a = fadeIn(0.9), L = successionLayout(), d = L.d, T = Game.territory, s = T.succession || {}, g = T.currentGeneration(), t = real();
+    ctx.save(); dim(ctx, 0.55 + 0.25 * a);
+    const rg = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, 700); rg.addColorStop(0, 'rgba(120,60,10,' + (0.14 * a) + ')'); rg.addColorStop(1, 'rgba(60,20,4,' + (0.32 * a) + ')'); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = a;
+    const bx = (W - L.bw) / 2, by = L.py, bw = L.bw;
+    panel(ctx, bx, by, bw, L.ph, { fill: 'rgba(16,10,8,0.93)', border: 'rgba(242,180,90,0.45)', r: 18 });
+    spaced(ctx, 'AN HEIR TAKES OVER', W / 2, by + 44, 6, { size: 13, weight: 700, color: COL.amberDim, align: 'center' });
+    txt(ctx, d.title, W / 2, by + 102, { size: 48, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center', shadow: true });
+    const sn = stageName(s.stage || 0).toLowerCase();
+    txt(ctx, (/^[aeiou]/.test(sn) ? 'An ' : 'A ') + sn + ' of generation ' + (g ? g.n : 1) + ' fell  ·  ' + T.calendar().label, W / 2, by + 132, { size: 14, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    ctx.fillStyle = 'rgba(242,180,90,0.3)'; ctx.fillRect(bx + 80, by + 148, bw - 160, 1);
+    para(ctx, d.flavor, bx + 70, by + L.flavorY - 6, bw - 140, { size: 16, lh: 23, italic: true, font: SERIF, color: COL.text, align: 'center', maxLines: 3 });
+    const sy = by + L.boxY; panel(ctx, bx + 40, sy, bw - 80, L.sbh, { fill: 'rgba(111,201,192,0.07)', border: 'rgba(111,201,192,0.32)', r: 12, accent: COL.info });
+    spaced(ctx, 'THE SCIENCE', bx + 66, sy + 24, 2, { size: 10.5, weight: 700, color: COL.info, align: 'left' }); para(ctx, d.science, bx + 66, sy + 32, bw - 132, { size: 14, lh: 20, color: COL.text, maxLines: 4 });
+    // the setback and the heirs
+    const sty = by + L.setY, S = T.SETBACK;
+    panel(ctx, bx + 40, sty, bw - 80, L.setH, { fill: 'rgba(30,22,14,0.8)', r: 12, border: COL.lineSoft });
+    spaced(ctx, 'THE SETBACK', bx + 66, sty + 24, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    const items = ['Half your progress to the next molt is lost', 'Hunger, thirst and energy restart at 50%', 'Silk is empty', 'Shaken: 15% slower for one in-game day', 'Heirloom webs where you fell lose 20%', 'You keep your stage and every upgrade'];
+    items.forEach((it, i) => { const cx = bx + 66 + (i % 2) * 360, cy = sty + 46 + Math.floor(i / 2) * 22; ctx.fillStyle = i === 5 ? COL.good : COL.amber; ctx.beginPath(); ctx.arc(cx, cy - 4, 2.6, 0, 7); ctx.fill(); txt(ctx, it, cx + 12, cy, { size: 13, color: i === 5 ? '#b4d99a' : COL.text }); });
+    const left = s.heirsLeft == null ? 0 : s.heirsLeft, hy = sty + 134;
+    ctx.fillStyle = COL.lineSoft; ctx.fillRect(bx + 66, hy - 20, bw - 132, 1);
+    txt(ctx, 'Heirs left after this one', bx + 66, hy + 2, { size: 13, weight: 600, color: COL.text2 });
+    for (let i = 0; i < 5; i++) { const hxx = bx + 66 + 200 + i * 28; if (i < left) drawKind(ctx, 'kin', hxx, hy - 4, 24); else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(hxx, hy - 4, 6, 0, 7); ctx.stroke(); } }
+    if (left > 5) txt(ctx, '+' + (left - 5), bx + 66 + 200 + 5 * 28, hy, { size: 13, weight: 700, color: COL.amberHi });
+    txt(ctx, left === 0 ? 'No heirs left: the next fall ends the line' : left + (left === 1 ? ' heir remains' : ' heirs remain'), bx + bw - 66, hy + 2, { size: 12.5, weight: 700, color: left === 0 ? COL.bad : COL.amberHi, align: 'right' });
+    const lock = real() - ui.enterT < 1.0;
+    drawButton(ctx, successionBtn(L), left === 0 ? 'Take over (the last heir)' : 'Take over', !lock, { size: 18, disabled: lock });
+    ctx.restore();
+  }
+
+  // ---- Lineage Ended: the whole line died out
+  function updateLineageEnded(nav) {
+    if (real() - ui.enterT < 1.4) return;
+    const rects = endRects(lineageEndedBtnY()), act = listInput('lineageended', rects, nav, { horizontal: true });
+    if (act === 0) { sfx('ui_click'); Game.territory.foundNewLine(); } else if (act === 1) { sfx('ui_back'); Game.toTitle(); }
+  }
+  const lineageEndedBtnY = () => 590;
+  function drawLineageEnded(ctx) {
+    const a = fadeIn(1.1), T = Game.territory, E = T.ended || {}, t = real(), D = (Game.edu && Game.edu.DEATH) || {}, d = D[E.cause] || D.default || { title: 'The last fall', science: '' };
+    ctx.save(); dim(ctx, 0.62 + 0.2 * a);
+    const rg = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, 720); rg.addColorStop(0, 'rgba(90,30,20,' + (0.14 * a) + ')'); rg.addColorStop(1, 'rgba(40,10,6,' + (0.36 * a) + ')'); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = a;
+    const bw = 900, bx = (W - bw) / 2, by = 36, bh = 640;
+    panel(ctx, bx, by, bw, bh, { fill: 'rgba(16,10,8,0.94)', border: 'rgba(229,96,77,0.4)', r: 18 });
+    spaced(ctx, 'THE LINE ENDS', W / 2, by + 44, 8, { size: 13, weight: 700, color: '#c98578', align: 'center' });
+    txt(ctx, fit(ctx, E.name || 'The line', bw - 100, 50, 700, SERIF), W / 2, by + 104, { size: 50, font: SERIF, weight: 700, color: '#ff9c8a', align: 'center', shadow: true });
+    txt(ctx, 'The final fall: ' + (d.title || 'misfortune') + '  ·  year ' + (E.year || 1) + '  ·  ' + (Game.speciesInfo(E.species).name), W / 2, by + 134, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    ctx.fillStyle = 'rgba(229,96,77,0.35)'; ctx.fillRect(bx + 80, by + 152, bw - 160, 1);
+    const L = E.longest || { seconds: 0, generation: 1 };
+    const cells = [[E.generations || 1, 'Generations lived'], [(E.rankName || 'Claim') + ' (' + (E.cp || 0) + ' CP)', 'Highest rank reached'], [fmtDur(L.seconds) + '  (gen ' + (L.generation || 1) + ')', 'Longest-lived spider'], [(E.facts || 0) + ' / ' + (E.factsTotal || 0), 'Facts unlocked'], [E.deaths || 0, 'Spiders lost'], [fmtDur(E.playSeconds || 0), 'Time played']];
+    const cw = (bw - 80 - 28) / 3; cells.forEach((c, i) => statCell(ctx, bx + 40 + (i % 3) * (cw + 14), by + 172 + Math.floor(i / 3) * 80, cw, 68, c[0], c[1]));
+    const sy = by + 340, sh = 104; panel(ctx, bx + 40, sy, bw - 80, sh, { fill: 'rgba(111,201,192,0.07)', border: 'rgba(111,201,192,0.32)', r: 12, accent: COL.info });
+    spaced(ctx, 'THE SCIENCE', bx + 66, sy + 26, 2, { size: 10.5, weight: 700, color: COL.info, align: 'left' }); para(ctx, d.science || '', bx + 66, sy + 34, bw - 132, { size: 14, lh: 20, color: COL.text, maxLines: 3 });
+    const slotHall = (Game.save && Game.save.slots()[(Game.state.slot || 1) - 1]) || { hall: [] };
+    para(ctx, 'This line is kept in the slot\'s Hall of Lines (' + slotHall.hall.length + (slotHall.hall.length === 1 ? ' line' : ' lines') + '). Your Codex and the spiders you have unlocked carry over to the next one.', bx + 70, by + 462, bw - 140, { size: 14.5, lh: 21, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    const rects = endRects(by + lineageEndedBtnY() - 36), foc = ui.idx.lineageended == null ? 0 : ui.idx.lineageended, lock = real() - ui.enterT < 1.4;
+    drawButton(ctx, rects[0], 'Found a New Line', foc === 0 && !lock, { size: 18, disabled: lock }); drawButton(ctx, rects[1], 'Title Screen', foc === 1 && !lock, { size: 18, disabled: lock });
+    ctx.restore();
+  }
+
+  // ---- the Legacy scene: the mother's story and the clutch, the traits to pass on, the winter turnover, then the next spring
+  const LEG_STEPS = ['Her story', 'Inherited traits', 'Winter'];
+  const legBtns = () => ({ next: { x: W - 80 - 280, y: 626, w: 280, h: 50 }, back: { x: 80, y: 626, w: 200, h: 50 } });
+  function updateLegacy(nav, dt) {
+    const T = Game.territory, L = T.legacy; if (!L) return;
+    if (!ui.legacy) ui.legacy = { idx: 0, t0: real(), wt0: 0 };
+    const U2 = ui.legacy, B = legBtns(), I = Game.input;
+    if (real() - ui.enterT < 1.2) return;
+    const hasTraits = L.candidates.length > 0 && L.slots > 0;
+    if (L.step === 0) {
+      if (nav.confirm || I.keyPressed('Enter') || (nav.click && inRect(nav.mx, nav.my, B.next))) { sfx('ui_click'); L.step = hasTraits ? 1 : 2; if (L.step === 2) { T.runWinter(); U2.wt0 = real(); } }
+    } else if (L.step === 1) {
+      const n = L.candidates.length; U2.idx = clamp(U2.idx, 0, n - 1);
+      const rects = traitRects(L);
+      if (nav.left) U2.idx = setIdx('legacyTrait', U2.idx - 1, n) ; if (nav.right) U2.idx = setIdx('legacyTrait', U2.idx + 1, n);
+      if (nav.moved) rects.forEach((r, i) => { if (inRect(nav.mx, nav.my, r) && i !== U2.idx) U2.idx = setIdx('legacyTrait', i, n); });
+      if (nav.click) rects.forEach((r, i) => { if (inRect(nav.mx, nav.my, r)) { U2.idx = i; if (T.legacyToggle(L.candidates[i].id)) sfx('ui_click'); else sfx('ui_back'); } });
+      if (I.keyPressed('Space') || I.keyPressed('KeyE')) { if (T.legacyToggle(L.candidates[U2.idx].id)) sfx('ui_click'); else sfx('ui_back'); }
+      if (I.keyPressed('Enter') || (nav.click && inRect(nav.mx, nav.my, B.next))) { sfx('ui_click'); L.step = 2; T.runWinter(); U2.wt0 = real(); }
+      if (nav.back || (nav.click && inRect(nav.mx, nav.my, B.back))) { sfx('ui_back'); L.step = 0; }
+    } else {
+      const done = real() - U2.wt0 > 4.2;
+      if (done && (nav.confirm || I.keyPressed('Enter') || (nav.click && inRect(nav.mx, nav.my, B.next)))) { sfx('ui_click'); T.legacyConfirm(); }
+    }
+  }
+  function traitRects(L) {
+    const n = L.candidates.length, cw = 150, gap = 12, tw = n * cw + (n - 1) * gap, x0 = (W - tw) / 2;
+    return L.candidates.map((c, i) => ({ x: x0 + i * (cw + gap), y: 250, w: cw, h: 190 }));
+  }
+  function drawLegacy(ctx) {
+    const T = Game.territory, L = T.legacy; if (!L) return;
+    const a = fadeIn(1.0), t = real(), F = ui.final || snapshotStats(), U2 = ui.legacy || { idx: 0, wt0: 0 };
+    ctx.save(); dim(ctx, 0.62 + 0.2 * a, 0.14 * a); ctx.globalAlpha = a;
+    spaced(ctx, 'A NEW GENERATION', W / 2, 70, 10, { size: 40, font: SERIF, weight: 700, color: COL.amberHi, align: 'center' });
+    txt(ctx, 'Generation ' + L.generation + ' ends  ·  ' + LEG_STEPS[L.step] + '  (' + (L.step + 1) + ' of 3)', W / 2, 102, { size: 15, italic: true, font: SERIF, color: COL.text2, align: 'center' });
+    const B = legBtns(), hasTraits = L.candidates.length > 0 && L.slots > 0;
+    if (L.step === 0) {
+      drawEggSacScene(ctx, 80, 128, 520, 300, t);
+      const sx = 630, sy = 128, sw = 570, m = L.mother, st = m.stats || {};
+      panel(ctx, sx, sy, sw, 300, { fill: 'rgba(20,14,9,0.88)', r: 14 });
+      spaced(ctx, 'HER STORY', sx + 24, sy + 30, 3, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+      const cells = [[stageName(m.stage), 'Stage reached'], [fmtDur(st.time || 0), 'Time as this generation'], [st.eaten || 0, 'Creatures eaten'], [st.webs || 0, 'Webs spun'], [st.stored || 0, 'Prey stored'], [m.deaths || 0, 'Heirs spent']];
+      const cw = (sw - 48 - 14) / 2; cells.forEach((c, i) => statCell(ctx, sx + 24 + (i % 2) * (cw + 14), sy + 46 + Math.floor(i / 2) * 62, cw, 54, c[0], c[1]));
+      txt(ctx, (st.facts || 0) + (st.facts === 1 ? ' fact' : ' facts') + ' learned this life', sx + 24, sy + 286, { size: 12, color: COL.text3 });
+      // the clutch
+      const cl = L.clutch, cy = 446, ch = 160; panel(ctx, 80, cy, 1120, ch, { fill: 'rgba(20,14,9,0.88)', r: 14 });
+      spaced(ctx, 'THE CLUTCH', 104, cy + 28, 3, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+      const parts = [['Base', '+' + cl.base], ['Pantry (' + cl.items + ' stored)', '+' + cl.pantry], ['In good condition', '+' + cl.condition], ['Territory rank', '+' + cl.rank]];
+      parts.forEach((p, i) => { const px = 104 + i * 168; txt(ctx, p[1], px, cy + 74, { size: 30, font: SERIF, weight: 700, color: Number(p[1]) === 0 || p[1] === '+0' ? COL.text3 : COL.amberHi }); txt(ctx, p[0].toUpperCase(), px, cy + 96, { size: 9.5, weight: 700, color: COL.text3 }); });
+      txt(ctx, 'x ' + cl.mult.toFixed(1), 104 + 4 * 168, cy + 74, { size: 30, font: SERIF, weight: 700, color: cl.mult < 1 ? COL.bad : COL.text2 }); txt(ctx, 'LAID ON DAY ' + cl.day + (cl.mult < 1 ? ' (LATE)' : ''), 104 + 4 * 168, cy + 96, { size: 9.5, weight: 700, color: cl.mult < 1 ? COL.bad : COL.text3 });
+      txt(ctx, '= ' + cl.total, 1200 - 40, cy + 80, { size: 50, font: SERIF, weight: 700, color: COL.amberHi, align: 'right' }); txt(ctx, 'HEIRS HATCH', 1200 - 40, cy + 100, { size: 10, weight: 700, color: COL.text3, align: 'right' });
+      const zn = L.site && L.site.zone ? (C.ZONES.find(z => z.id === L.site.zone) || {}).name : ''; para(ctx, 'The egg sac lies in a hidden ' + ((L.site && L.site.type) || 'shelter') + (zn ? ' in the ' + zn : '') + ', and that is where the next generation hatches. Laying earlier in the mating season means a bigger clutch.', 104, cy + 112, 940, { size: 13, lh: 18, italic: true, font: SERIF, color: COL.text2 });
+      drawButton(ctx, B.next, hasTraits ? 'Choose inherited traits' : 'Into the winter', true, { size: 17 });
+    } else if (L.step === 1) {
+      para(ctx, 'Pick up to ' + L.slots + (L.slots === 1 ? ' trait' : ' traits') + ' to pass on. Each is inherited one level below the level you reached (never below 1), and your heirs can still choose more at their molts.', 160, 128, W - 320, { size: 15, lh: 22, align: 'center', color: COL.text2 });
+      txt(ctx, L.chosen.length + ' / ' + L.slots + ' chosen', W / 2, 206, { size: 16, weight: 700, color: L.chosen.length >= L.slots ? COL.amberHi : COL.text2, align: 'center' });
+      const rects = traitRects(L), foc = U2.idx;
+      L.candidates.forEach((c, i) => {
+        const r = rects[i], def = C.UPGRADES.find(u => u.id === c.id) || { id: c.id, name: titleize(c.id), max: 3, desc: '' }, on = L.chosen.indexOf(c.id) >= 0, f = i === foc;
+        if (f) { ctx.save(); ctx.shadowColor = 'rgba(242,180,90,0.45)'; ctx.shadowBlur = 20; panel(ctx, r.x, r.y, r.w, r.h, { fill: COL.panelHi, border: on ? COL.good : COL.amber, bw: 2, r: 14 }); ctx.restore(); }
+        else panel(ctx, r.x, r.y, r.w, r.h, { fill: on ? 'rgba(30,40,20,0.9)' : COL.panel, border: on ? 'rgba(155,214,92,0.6)' : COL.line, r: 14 });
+        const cx = r.x + r.w / 2; ctx.beginPath(); ctx.arc(cx, r.y + 52, 28, 0, 7); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = on ? COL.good : COL.amberDim; ctx.stroke();
+        icon(ctx, UPGRADE_ICON[def.id] || 'star', cx, r.y + 52, 30, on ? COL.good : COL.amber);
+        txt(ctx, fit(ctx, def.name, r.w - 16, 15, 700, SERIF), cx, r.y + 106, { size: 15, font: SERIF, weight: 700, color: on ? '#c8ec9a' : COL.text, align: 'center' });
+        txt(ctx, 'Level ' + c.level + '  →  ' + c.passes, cx, r.y + 128, { size: 12, weight: 600, color: COL.text2, align: 'center' });
+        for (let k = 0; k < (def.max || 3); k++) { ctx.beginPath(); ctx.arc(cx + (k - ((def.max || 3) - 1) / 2) * 16, r.y + 148, 4.5, 0, 7); if (k < c.passes) { ctx.fillStyle = on ? COL.good : COL.amber; ctx.fill(); } else { ctx.lineWidth = 1.3; ctx.strokeStyle = COL.amberDeep; ctx.stroke(); } }
+        txt(ctx, on ? 'PASSED ON' : 'tap to pass on', cx, r.y + r.h - 14, { size: 10, weight: 700, color: on ? COL.good : COL.text3, align: 'center' });
+      });
+      if (L.mutation) { const md = C.UPGRADES.find(u => u.id === L.mutation) || { name: titleize(L.mutation) }; panel(ctx, W / 2 - 330, 462, 660, 62, { fill: 'rgba(120,70,170,0.14)', border: 'rgba(183,140,240,0.5)', r: 12 }); icon(ctx, UPGRADE_ICON[L.mutation] || 'star', W / 2 - 296, 493, 26, '#d2b0ff'); txt(ctx, 'A MUTATION', W / 2 - 266, 483, { size: 10, weight: 700, color: '#c9a4ff' }); txt(ctx, md.name + ' appears at level 1 in the heirs, a gift of chance on top of your picks.', W / 2 - 266, 503, { size: 13.5, weight: 600, color: COL.text }); }
+      else txt(ctx, 'Each generation has a 15% chance of a mutation: a trait neither parent had. None this time.', W / 2, 496, { size: 12.5, italic: true, font: SERIF, color: COL.text3, align: 'center' });
+      txt(ctx, '← → choose  ·  Space or click to toggle  ·  Enter to continue', W / 2, 560, { size: 12, color: COL.text3, align: 'center' });
+      drawButton(ctx, B.back, 'Back', false, { size: 16 }); drawButton(ctx, B.next, 'Into the winter', true, { size: 17 });
+    } else {
+      const rep = L.report || T.runWinter() || { days: 0 }, age = real() - (U2.wt0 || real()), prog = clamp(age / 3.2, 0, 1), done = age > 4.2;
+      // a year dial: the marker travels from the day she laid to spring
+      const cx = 330, cy = 340, R = 150, cal = { day: L.day }, y0 = (L.day - 1) / 36, ang = (f) => -Math.PI / 2 + f * Math.PI * 2;
+      ['spring', 'summer', 'autumn', 'winter'].forEach((sn, i) => { ctx.beginPath(); ctx.arc(cx, cy, R, ang(i / 4) + 0.03, ang((i + 1) / 4) - 0.03); ctx.lineWidth = 16; ctx.lineCap = 'butt'; ctx.strokeStyle = U.rgba(SEASON_COL[sn], 0.5); ctx.stroke(); const mid = ang((i + 0.5) / 4); icon(ctx, SEASON_ICON[sn], cx + Math.cos(mid) * (R + 34), cy + Math.sin(mid) * (R + 34), 20, SEASON_COL[sn]); txt(ctx, cap1(sn), cx + Math.cos(mid) * (R + 62), cy + Math.sin(mid) * (R + 62) + 4, { size: 11, weight: 700, color: COL.text3, align: 'center' }); });
+      const f = lerp(y0, 1, smooth(prog)), mk = ang(f); ctx.fillStyle = '#fff4d6'; ctx.beginPath(); ctx.arc(cx + Math.cos(mk) * R, cy + Math.sin(mk) * R, 11, 0, 7); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = COL.amberDeep; ctx.stroke();
+      const dayNow = Math.min(36, Math.floor(f * 36) + 1), curS = T.SEASONS[Math.min(3, Math.floor((dayNow - 1) / 9))];
+      txt(ctx, prog >= 1 ? 'Spring' : curS.name, cx, cy - 4, { size: 30, font: SERIF, weight: 700, color: SEASON_COL[prog >= 1 ? 'spring' : curS.id], align: 'center' });
+      txt(ctx, prog >= 1 ? 'Year ' + rep.toYear + ', day 1' : 'Day ' + dayNow + ' of 36', cx, cy + 22, { size: 15, weight: 600, color: COL.text2, align: 'center' });
+      const rx = 640, ry = 150, rw = 560;
+      panel(ctx, rx, ry, rw, 440, { fill: 'rgba(20,14,9,0.88)', r: 14 });
+      spaced(ctx, 'THE WINTER TURNOVER', rx + 24, ry + 32, 3, { size: 11, weight: 700, color: COL.amberDim, align: 'left' });
+      const lines = [
+        ['', rep.days + ' days pass while the egg sac waits.', COL.text, 0.1],
+        ['', rep.websDamaged + rep.websLost ? 'Heirloom webs weather the cold: ' + rep.websDamaged + ' hold on' + (rep.websLost ? ', ' + rep.websLost + ' fall' : '') + '. Webs outside the Claim and ordinary webs are gone.' : 'You had no heirloom webs. Every web decays over the winter.', rep.websLost ? '#ffb0a0' : COL.text, 0.3],
+        ['', rep.spoiled ? rep.spoiled + ' stored ' + (rep.spoiled === 1 ? 'bundle' : 'bundles') + ' spoil.' : 'Nothing in the pantry spoils.', rep.spoiled ? '#ffb0a0' : COL.text, 0.5],
+        ['', rep.kept ? rep.kept + ' ' + (rep.kept === 1 ? 'bundle keeps' : 'bundles keep') + ', ready for the heirs.' : 'The pantry is empty when spring comes.', COL.text2, 0.55],
+        ['', 'The dew returns to every drop and the weather settles.', COL.text2, 0.7],
+        ['', 'Winter turnover survived:  +' + rep.cp + ' Claim Points', COL.amberHi, 0.85],
+      ];
+      let yy = ry + 66;
+      lines.forEach(l => { const al = smooth(clamp((prog - l[3]) / 0.15 + 0.0001, 0, 1)); ctx.save(); ctx.globalAlpha *= al; yy = para(ctx, l[1], rx + 28, yy, rw - 56, { size: 15, lh: 21, color: l[2], weight: l[2] === COL.amberHi ? 700 : 400 }) + 14; ctx.restore(); });
+      if (done) { const nr = T.legacy; const g = T.currentGeneration(); txt(ctx, 'Spring, year ' + rep.toYear + ': ' + L.clutch.total + (L.clutch.total === 1 ? ' heir hatches' : ' heirs hatch') + ' at the egg site.', rx + 28, ry + 410, { size: 15, italic: true, font: SERIF, color: COL.text, weight: 600 }); }
+      drawButton(ctx, B.next, 'Hatch', done, { size: 18, disabled: !done });
+    }
+    ctx.restore();
+  }
+
+  // ---- Codex tab: the Lineage (every generation, its traits and mutation; the Hall of Lines)
+  function updateLineage(nav) {
+    const cx = ui.codex, T = Game.territory; if (!isTerritory()) return;
+    const n = (T.lineage ? T.lineage.generations.length : 0) * 92 + 40; cx.lscroll = cx.lscroll || 0;
+    if (nav.up) cx.lscroll -= 60; if (nav.down) cx.lscroll += 60; if (nav.wheel) cx.lscroll += nav.wheel * 80;
+    cx.lscroll = clamp(cx.lscroll, 0, Math.max(0, n - 430));
+  }
+  function drawLineage(ctx) {
+    const cx = ui.codex, T = Game.territory;
+    if (!isTerritory()) {
+      txt(ctx, 'The Lineage belongs to Territory mode', W / 2, 300, { size: 26, font: SERIF, weight: 700, color: COL.text2, align: 'center' });
+      para(ctx, 'In Territory every egg sac starts a new generation. Their species, traits, mutations and fates are recorded here, along with the Hall of Lines for ended lineages.', W / 2 - 340, 330, 680, { size: 15, lh: 22, color: COL.text3, align: 'center' }); return;
+    }
+    const L = T.lineage, gens = L ? L.generations : [], x0 = 60, w = 780;
+    txt(ctx, T.lineageName, x0, 124, { size: 26, font: SERIF, weight: 700, color: COL.amberHi });
+    txt(ctx, gens.length + (gens.length === 1 ? ' generation' : ' generations') + '  ·  ' + T.rankInfo().name + '  ·  ' + Game.speciesInfo(Game.state.species).name, x0, 148, { size: 13, color: COL.text2 });
+    // list
+    ctx.save(); ctx.beginPath(); ctx.rect(x0 - 6, 162, w + 12, 500); ctx.clip();
+    let y = 166 - (cx.lscroll || 0);
+    for (let gi = gens.length - 1; gi >= 0; gi--) {
+      const g = gens[gi], cur = gi === gens.length - 1, rh = 84;
+      panel(ctx, x0, y, w, rh, { fill: cur ? COL.panelHi : 'rgba(24,17,11,0.9)', border: cur ? 'rgba(255,205,130,0.45)' : COL.line, r: 12, accent: cur ? COL.amber : null });
+      txt(ctx, 'Generation ' + g.n, x0 + 20, y + 28, { size: 19, font: SERIF, weight: 700, color: cur ? COL.amberHi : COL.text });
+      txt(ctx, 'Born year ' + g.born.year + ', day ' + g.born.day + '  ·  reached ' + stageName(g.stage).toLowerCase(), x0 + 20, y + 50, { size: 12.5, color: COL.text2 });
+      const status = g.status === 'laid' ? 'Laid the sac, year ' + g.laid.year + ' day ' + g.laid.day + '  ·  clutch ' + g.clutch : (g.status === 'ended' ? 'The line ended here' : 'Alive');
+      txt(ctx, status, x0 + 20, y + 71, { size: 11.5, weight: 600, color: g.status === 'laid' ? COL.good : (g.status === 'ended' ? COL.bad : COL.amber) });
+      // inherited traits and mutation
+      let tx = x0 + w - 18;
+      if (g.mutation) { const md = C.UPGRADES.find(u => u.id === g.mutation); const lab = 'MUTATION  ' + (md ? md.name : g.mutation); const cw2 = measure(ctx, lab, 10, 700) + 18; chip(ctx, lab, tx - cw2, y + 12, '#c9a4ff', { size: 10 }); tx -= cw2 + 8; }
+      (g.traits || []).slice().reverse().forEach(tr => { const def = C.UPGRADES.find(u => u.id === tr.id); icon(ctx, UPGRADE_ICON[tr.id] || 'star', tx - 11, y + 24, 18, COL.amber); txt(ctx, 'Lv' + tr.level, tx - 28, y + 28, { size: 11, weight: 700, color: COL.text2, align: 'right' }); tx -= 66; });
+      if (g.deaths && g.deaths.length) { txt(ctx, g.deaths.length + (g.deaths.length === 1 ? ' heir spent' : ' heirs spent') + ': ' + g.deaths.map(d => ((Game.edu.DEATH[d.cause] || {}).title || d.cause)).slice(-3).join(', '), x0 + w - 18, y + 62, { size: 11, color: COL.text3, align: 'right' }); }
+      y += rh + 8;
+    }
+    ctx.restore();
+    // right column: heirs and the Hall of Lines
+    const rx = 870, rw = 350;
+    panel(ctx, rx, 118, rw, 150, { fill: 'rgba(24,17,11,0.9)', r: 12 });
+    spaced(ctx, 'HEIRS REMAINING', rx + 20, 146, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    const heirs = L ? L.heirs : 0; txt(ctx, String(heirs), rx + 20, 202, { size: 52, font: SERIF, weight: 700, color: heirs > 0 ? COL.amberHi : COL.bad });
+    for (let i = 0; i < 5; i++) { const hx = rx + 130 + i * 40; if (i < heirs) drawKind(ctx, 'kin', hx, 186, 30); else { ctx.strokeStyle = 'rgba(180,160,130,0.3)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(hx, 186, 8, 0, 7); ctx.stroke(); } }
+    para(ctx, 'When your spider falls an heir takes over. When none are left the line ends.', rx + 20, 214, rw - 40, { size: 12, lh: 16, italic: true, font: SERIF, color: COL.text3 });
+    panel(ctx, rx, 284, rw, 378, { fill: 'rgba(24,17,11,0.9)', r: 12 });
+    spaced(ctx, 'HALL OF LINES', rx + 20, 312, 2, { size: 10.5, weight: 700, color: COL.amberDim, align: 'left' });
+    const slot = Game.save && Game.save.slots()[(Game.state.slot || 1) - 1], hall = slot ? slot.hall : [];
+    if (!hall.length) para(ctx, 'No lineage has ended in this slot yet. May yours go on for a very long time.', rx + 20, 326, rw - 40, { size: 13, lh: 18, italic: true, font: SERIF, color: COL.text3 });
+    hall.slice(0, 6).forEach((h, i) => { const yy = 330 + i * 54; txt(ctx, fit(ctx, h.name, rw - 40, 14, 700, SERIF), rx + 20, yy + 14, { size: 14, font: SERIF, weight: 700, color: COL.text }); txt(ctx, h.generations + (h.generations === 1 ? ' generation' : ' generations') + '  ·  ' + (h.rankName || 'Claim') + '  ·  ' + fmtDur(h.playSeconds), rx + 20, yy + 33, { size: 11.5, color: COL.text3 }); });
+  }
+
 
   Game.register('ui', ui);
 })();

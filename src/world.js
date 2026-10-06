@@ -1461,7 +1461,8 @@
     obstacles: D.obstacles, resources: D.resources, shelters: D.shelters, anchors: D.anchors,
     explored: null, exploredCell: 64, exploredCols: ceil(W / 64), exploredRows: ceil(H / 64),
     sun: 1, night: 0, wet: 0, stats: { urgentMs: 0, jobMs: 0, blitMs: 0, urgent: 0, missing: 0 },
-    fx: { rain: 0, drizzle: 0, fog: 0, wind: 0, flash: 0 },
+    fx: { rain: 0, drizzle: 0, fog: 0, wind: 0, frost: 0, flash: 0 },
+    seed: SEED,   // the terrain is generated once from this fixed seed, so every run (and every save) shares the same world; saves store it and refuse a mismatch
   };
   world.explored = new Uint8Array(world.exploredCols * world.exploredRows);
   let canvasOK = false;
@@ -1482,25 +1483,36 @@
     if (s > 0.38) phase = 'day'; else if (s < -0.2) phase = 'night';
     else phase = cos(TAU * t) > 0 ? 'dawn' : 'dusk';
     const fx = world.fx;
-    const clouds = clamp(fx.rain * 0.38 + fx.drizzle * 0.2 + fx.fog * 0.16, 0, 0.45);
+    const clouds = clamp(fx.rain * 0.38 + fx.drizzle * 0.2 + fx.fog * 0.16 + fx.frost * 0.08, 0, 0.45);
     world.light = clamp(0.08 + 0.92 * sun * (1 - clouds), 0.08, 1);
     if (phase !== world.phase) { const prev = world.phase; world.phase = phase; if (prev) Game.emit('day:phase', { phase }); }
   }
   world.isNight = () => world.phase === 'night';
 
   // ---- weather
-  const WSPEC = { drizzle: [0.35, 0.65], rain: [0.62, 1.0], wind: [0.5, 1.0], fog: [0.55, 1.0] };
+  const WSPEC = { drizzle: [0.35, 0.65], rain: [0.62, 1.0], wind: [0.5, 1.0], fog: [0.55, 1.0], frost: [0.5, 1.0] };
   const wS = { phase: 'gap', timer: 70, target: 0, thunder: 20, pending: [], lastType: 'clear', ang: 0.35 };
   function setWeatherType(type) {
     const w = world.weather; if (w.type === type) return;
     const prev = w.type; w.type = type; wS.lastType = prev === 'clear' ? wS.lastType : prev;
     Game.emit('weather:change', { weather: type, prev });
   }
+  function seasonWeather() {
+    const T = Game.territory;
+    if (!T || !T.active || !T.weatherBias) return null;
+    try { return T.weatherBias() || null; } catch (e) { return null; }
+  }
   function chooseWeather() {
     const day1 = world.dayCount >= 1, ph = world.phase, opts = [];
     opts.push(['wind', 20]);
     opts.push(['fog', (ph === 'dawn' || ph === 'night') ? 26 : 12]);
     if (day1) { opts.push(['rain', 24]); opts.push(['drizzle', 26]); }
+    // Territory: the season tilts the odds (spring rain, autumn fog, winter frost) through Game.territory.weatherBias()
+    const bias = seasonWeather();
+    if (bias) {
+      if (bias.frost > 0) opts.push(['frost', 30]);
+      for (let i = opts.length - 1; i >= 0; i--) { opts[i][1] *= bias[opts[i][0]] == null ? 1 : bias[opts[i][0]]; if (opts[i][1] <= 0) opts.splice(i, 1); }
+    }
     let tot = 0; opts.forEach(o => { if (o[0] === wS.lastType) o[1] *= 0.3; tot += o[1]; });
     let r = Math.random() * tot; for (const o of opts) { r -= o[1]; if (r <= 0) return o[0]; }
     return 'wind';
@@ -1517,10 +1529,10 @@
       if (wS.timer <= 0) wS.phase = 'out';
     } else {
       w.intensity = max(0, w.intensity - dt * 0.09);
-      if (w.intensity <= 0) { setWeatherType('clear'); wS.phase = 'gap'; wS.timer = U.rand(55, 140); }
+      if (w.intensity <= 0) { setWeatherType('clear'); wS.phase = 'gap'; wS.timer = U.rand(55, 140) * ((seasonWeather() || {}).gap || 1); }
     }
     const fx = world.fx, k = 1 - Math.exp(-dt * 1.2);
-    for (const key of ['rain', 'drizzle', 'fog', 'wind']) { const tgt = w.type === key ? w.intensity : 0; fx[key] += (tgt - fx[key]) * k; if (fx[key] < 0.002 && tgt === 0) fx[key] = 0; }
+    for (const key of ['rain', 'drizzle', 'fog', 'wind', 'frost']) { const tgt = w.type === key ? w.intensity : 0; fx[key] += (tgt - fx[key]) * k; if (fx[key] < 0.002 && tgt === 0) fx[key] = 0; }
     // wind vector: slowly wandering direction, breeze always present
     const tt = Game.time.t; wS.ang = 0.35 + sin(tt * 0.05) * 0.9 + sin(tt * 0.13 + 1) * 0.35;
     const str = 0.12 + 0.07 * sin(tt * 0.31) + fx.wind * 0.78 + fx.rain * 0.16 + fx.drizzle * 0.05;
@@ -1841,8 +1853,35 @@
     gr.addColorStop(0, 'rgba(210,218,222,0)'); gr.addColorStop(1, 'rgba(210,218,222,' + (0.38 * amt).toFixed(3) + ')');
     g.fillStyle = gr; g.fillRect(0, 0, C.VIEW_W, C.VIEW_H);
   }
+  // cold snap: a pale blue cast, frost creeping in from the screen edges as ice crystals, and a few drifting flecks of ice
+  function drawFrost(g, amt) {
+    const t = Game.time.real, VW = C.VIEW_W, VH = C.VIEW_H;
+    g.fillStyle = 'rgba(170,205,240,' + (0.1 * amt).toFixed(3) + ')'; g.fillRect(0, 0, VW, VH);
+    const gr = g.createRadialGradient(VW / 2, VH / 2, VH * 0.34, VW / 2, VH / 2, VH * 0.98);
+    gr.addColorStop(0, 'rgba(225,240,255,0)'); gr.addColorStop(1, 'rgba(225,240,255,' + (0.42 * amt).toFixed(3) + ')');
+    g.fillStyle = gr; g.fillRect(0, 0, VW, VH);
+    const n = floor(54 * min(1, amt + 0.15));
+    g.lineCap = 'round'; g.lineWidth = 1.1; g.strokeStyle = 'rgba(235,246,255,' + (0.55 * amt).toFixed(3) + ')'; g.beginPath();
+    for (let i = 0; i < n; i++) {
+      const side = i & 3, u = RX[i], v = RY[i], d = RL[i] * 50 * amt;
+      const x = side === 2 ? d : (side === 3 ? VW - d : u * VW), y = side === 0 ? d : (side === 1 ? VH - d : v * VH), s = (8 + 26 * RS[i]) * (0.4 + amt * 0.6);
+      for (let a = 0; a < 6; a++) {
+        const ang = a * PI / 3 + RX[(i + 7) % NR] * 0.6, ex = x + cos(ang) * s, ey = y + sin(ang) * s;
+        g.moveTo(x, y); g.lineTo(ex, ey);
+        g.moveTo(x + cos(ang) * s * 0.55, y + sin(ang) * s * 0.55); g.lineTo(x + cos(ang + 0.7) * s * 0.85, y + sin(ang + 0.7) * s * 0.85);
+        g.moveTo(x + cos(ang) * s * 0.55, y + sin(ang) * s * 0.55); g.lineTo(x + cos(ang - 0.7) * s * 0.85, y + sin(ang - 0.7) * s * 0.85);
+      }
+    }
+    g.stroke();
+    g.fillStyle = 'rgba(240,248,255,' + (0.5 * amt).toFixed(3) + ')';
+    for (let i = 0; i < 40; i++) {
+      const z = MZ[i % NM], x = ((MX[i % NM] * VW + t * 9 * z + sin(t * 0.7 + MP[i % NM]) * 24) % VW + VW) % VW, y = ((MY[i % NM] * VH + t * 26 * z) % VH + VH) % VH;
+      g.beginPath(); g.arc(x, y, 0.8 + z * 1.2, 0, TAU); g.fill();
+    }
+  }
   function drawWeatherScreen(g) {
     const fx = world.fx;
+    if (fx.frost > 0.01) drawFrost(g, fx.frost);
     if (fx.fog > 0.01) drawFog(g, fx.fog);
     if (fx.drizzle > 0.01) drawRain(g, fx.drizzle, true);
     if (fx.rain > 0.01) { drawRain(g, fx.rain, false); g.fillStyle = 'rgba(40,56,80,' + (0.18 * fx.rain).toFixed(3) + ')'; g.fillRect(0, 0, C.VIEW_W, C.VIEW_H); }
@@ -1966,7 +2005,7 @@
     world.time01 = 0.02; world.dayCount = 0; world.phase = null;
     const w = world.weather; w.type = 'clear'; w.intensity = 0; w.windX = 0.12; w.windY = 0.04;
     wS.phase = 'gap'; wS.timer = U.rand(60, 90); wS.thunder = 20; wS.pending.length = 0; wS.lastType = 'clear';
-    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = fx.flash = 0; world.wet = 0;
+    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = fx.frost = fx.flash = 0; world.wet = 0;
     D.resources.forEach(r => { r.amount = r.max; });
     D.canopy.forEach(c => { c.a = 1; c.ta = 1; c.inList = false; }); fading.length = 0;
     world.explored.fill(0);
@@ -1993,12 +2032,56 @@
     if ((expFrame++ & 3) === 0) { const P = Game.player, st = P && P.stage ? P.stage : 0; world.markExplored(f.x, f.y, 250 + st * 60); }
   };
 
+  // ---- Territory: saving. serialize() is a plain JSON-safe slice, deserialize(d) restores it after reset() (missing or odd fields fall back to defaults).
+  // The terrain, shelters and anchors never change (fixed seed), so only the live state is saved: clock, weather, drained resources, the explored map.
+  const round = (v, n) => { const k = Math.pow(10, n || 0); return Math.round(v * k) / k; };
+  function packBits(u8) { const out = new Uint8Array(Math.ceil(u8.length / 8)); for (let i = 0; i < u8.length; i++) if (u8[i]) out[i >> 3] |= 1 << (i & 7); return out; }
+  function unpackBits(bytes, out) { for (let i = 0; i < out.length; i++) out[i] = ((bytes[i >> 3] || 0) >> (i & 7)) & 1 ? 255 : 0; return out; }
+  world.serialize = function () {
+    const w = world.weather, res = [];
+    for (let i = 0; i < D.resources.length; i++) { const r = D.resources[i]; if (r.amount < r.max - 0.05) res.push([r.id, round(r.amount, 1)]); }
+    return {
+      time01: round(world.time01, 5), dayCount: world.dayCount, wet: round(world.wet, 3),
+      weather: { type: w.type, intensity: round(w.intensity, 3), windX: round(w.windX, 3), windY: round(w.windY, 3) },
+      wS: { phase: wS.phase, timer: round(wS.timer, 1), target: round(wS.target, 3), thunder: round(wS.thunder, 1), lastType: wS.lastType },
+      resources: res,
+      explored: U.bytesToB64(packBits(world.explored)),
+    };
+  };
+  world.deserialize = function (d) {
+    if (!d || typeof d !== 'object') return;
+    const num = (v, def) => (typeof v === 'number' && isFinite(v)) ? v : def;
+    world.dayCount = Math.max(0, Math.floor(num(d.dayCount, 0)));
+    world.time01 = clamp(num(d.time01, 0.02), 0, 0.99999);
+    world.wet = clamp(num(d.wet, 0), 0, 1);
+    const w = world.weather, sw = d.weather || {}, ws = d.wS || {};
+    const type = (sw.type === 'clear' || WSPEC[sw.type]) ? sw.type : 'clear';
+    w.type = type; w.intensity = type === 'clear' ? 0 : clamp(num(sw.intensity, 0.6), 0, 1); w.windX = num(sw.windX, 0.12); w.windY = num(sw.windY, 0.04);
+    // a weather spell in progress carries on; its length was not worth saving, so it holds for a while and then fades as usual
+    wS.phase = type === 'clear' ? 'gap' : 'hold'; wS.target = w.intensity; wS.timer = type === 'clear' ? clamp(num(ws.timer, 60), 20, 140) : U.rand(40, 90);
+    wS.thunder = clamp(num(ws.thunder, 20), 5, 60); wS.pending.length = 0; wS.lastType = (ws.lastType === 'clear' || WSPEC[ws.lastType]) ? ws.lastType : 'clear';
+    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = fx.frost = fx.flash = 0; if (type !== 'clear') fx[type] = w.intensity;
+    D.resources.forEach(r => { r.amount = r.max; });
+    if (Array.isArray(d.resources)) {
+      const byId = {}; D.resources.forEach(r => { byId[r.id] = r; });
+      d.resources.forEach(e => { const r = Array.isArray(e) && byId[e[0]]; if (r && typeof e[1] === 'number' && isFinite(e[1])) r.amount = clamp(e[1], 0, r.max); });
+    }
+    if (typeof d.explored === 'string') { try { unpackBits(U.b64ToBytes(d.explored), world.explored); } catch (e) { /* keep the fresh map */ } }
+    world.phase = null; computeLight();
+  };
+  // winter turnover while the player is away from the action (Territory legacy scene): water drips back, the weather settles
+  world.regrow = function () {
+    D.resources.forEach(r => { r.amount = r.max; });
+    const w = world.weather; w.type = 'clear'; w.intensity = 0; wS.phase = 'gap'; wS.timer = U.rand(60, 90); wS.pending.length = 0; wS.lastType = 'clear';
+    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = fx.frost = fx.flash = 0; world.wet = 0; computeLight();
+  };
+
   // Debug / test helper (also handy for other modules' tests): jump the clock or force weather.
   world.setTime = (t01) => { world.time01 = ((t01 % 1) + 1) % 1; computeLight(); };
   world.forceWeather = (type, intensity) => {
     const w = world.weather; setWeatherType(type); w.intensity = type === 'clear' ? 0 : (intensity == null ? 0.8 : intensity);
     wS.phase = type === 'clear' ? 'gap' : 'hold'; wS.timer = type === 'clear' ? 120 : 1e9;
-    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = 0; if (type !== 'clear') fx[type] = w.intensity; computeLight();
+    const fx = world.fx; fx.rain = fx.drizzle = fx.fog = fx.wind = fx.frost = 0; if (type !== 'clear') fx[type] = w.intensity; computeLight();
   };
   world._dbg = { D, SP, CC, renderChunk, chunkMake, wS, setFlush: (b) => { FLUSH = !!b; } };
 
